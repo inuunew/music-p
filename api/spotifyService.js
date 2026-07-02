@@ -36,14 +36,14 @@ function wrapText(text, maxCharsPerLine = 22) {
   return lines;
 }
 
-// SUDAH DIPERBAIKI: Menggunakan string kutip ganda agar tidak merusak sintaks JavaScript
+// FIX TOTAL: Menggunakan string entitas XML standar yang aman dari tabrakan tanda kutip
 const escapeXml = (unsafe) => (unsafe || "").replace(/[<>&'"]/g, c => {
   switch (c) {
-    case '<': return "&lt;";
-    case '>': return "&gt;";
-    case '&': return "&amp;";
-    case "'": return "&apos;";
-    case '"': return "&quot;";
+    case '<': return '&lt;';
+    case '>': return '&gt;';
+    case '&': return '&amp;';
+    case "'": return '&apos;';
+    case '"': return '&quot;';
     default: return c;
   }
 });
