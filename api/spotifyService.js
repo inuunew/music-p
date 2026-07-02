@@ -36,6 +36,7 @@ function wrapText(text, maxCharsPerLine = 22) {
   return lines;
 }
 
+// SUDAH DIPERBAIKI: Menggunakan entitas XML yang valid dan anti-crash
 const escapeXml = (unsafe) => (unsafe || "").replace(/[<>&'"]/g, c => {
   switch (c) {
       case '<': return '&lt;';
@@ -45,8 +46,6 @@ const escapeXml = (unsafe) => (unsafe || "").replace(/[<>&'"]/g, c => {
       case '"': return '&quot;';
   }
 });
-
-
 
 async function drawCardSpotify({ bg, cover, title, artist }) {
   const width = 320;
@@ -169,7 +168,7 @@ class Parser {
     return {
       uri,
       id: p[2] || null,
-      url: p[2] ? `https://open.spotify.com/$$/${p[1]}/${p[2]}` : null
+      url: p[2] ? `http://googleusercontent.com/spotify.com/${p[1]}/${p[2]}` : null
     };
   }
 
@@ -510,5 +509,4 @@ class Spotify {
   }
 }
 
-// Ekspor modul agar bisa dibaca server.js
 module.exports = { Spotify, drawCardSpotify };
