@@ -13,9 +13,14 @@ function PlayerProvider({ children }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false); // tampilan "Now Playing" penuh
+  const [queue, setQueue] = useState([]); // daftar id lagu yang sedang diputar berurutan
+  const [queueIndex, setQueueIndex] = useState(-1);
   const audioRef = useRef(null);
 
-  const play = useCallback(async (trackId) => {
+  // Mengambil metadata + link audio sebuah lagu dan memutarnya.
+  // Tidak menyentuh state antrean (queue) — dipakai baik untuk lagu tunggal
+  // maupun saat berpindah ke lagu berikutnya dalam antrean.
+  const loadTrack = useCallback(async (trackId) => {
     setLoading(true);
     try {
       // 1. Ambil metadata dari API internal
@@ -50,7 +55,8 @@ function PlayerProvider({ children }) {
         album: t.album?.name || null,
         dl: dlJson.result.dl,
       });
-      setSheetOpen(true);
+      // Sheet TIDAK dibuka otomatis di sini — hanya mini player yang muncul.
+      // Sheet penuh baru terbuka saat pengguna mengetuk mini player.
       // loading akan dimatikan setelah audio benar-benar siap
     } catch (err) {
       console.error(err);
@@ -58,6 +64,40 @@ function PlayerProvider({ children }) {
       setLoading(false);
     }
   }, []);
+
+  // Putar satu lagu tunggal (di luar konteks playlist)
+  const play = useCallback((trackId) => {
+    setQueue([trackId]);
+    setQueueIndex(0);
+    loadTrack(trackId);
+  }, [loadTrack]);
+
+  // Putar sekumpulan lagu berurutan (mis. dari playlist), mulai dari startIndex
+  const playQueue = useCallback((trackIds, startIndex = 0) => {
+    if (!trackIds || !trackIds.length) return;
+    setQueue(trackIds);
+    setQueueIndex(startIndex);
+    loadTrack(trackIds[startIndex]);
+  }, [loadTrack]);
+
+  const next = useCallback(() => {
+    const nextIdx = queueIndex + 1;
+    if (nextIdx < queue.length) {
+      setQueueIndex(nextIdx);
+      loadTrack(queue[nextIdx]);
+    }
+  }, [queue, queueIndex, loadTrack]);
+
+  const previous = useCallback(() => {
+    const prevIdx = queueIndex - 1;
+    if (prevIdx >= 0) {
+      setQueueIndex(prevIdx);
+      loadTrack(queue[prevIdx]);
+    }
+  }, [queue, queueIndex, loadTrack]);
+
+  const hasNext = queueIndex >= 0 && queueIndex < queue.length - 1;
+  const hasPrevious = queueIndex > 0;
 
   const togglePlay = useCallback(() => {
     if (!audioRef.current) return;
@@ -85,6 +125,8 @@ function PlayerProvider({ children }) {
     setCurrentTime(0);
     setDuration(0);
     setSheetOpen(false);
+    setQueue([]);
+    setQueueIndex(-1);
   }, []);
 
   // Pasang ulang listener setiap kali sumber lagu berganti
@@ -99,7 +141,16 @@ function PlayerProvider({ children }) {
     };
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
-    const onEnded = () => stop();
+    const onEnded = () => {
+      // Otomatis lanjut ke lagu berikutnya dalam antrean (playlist), jika ada.
+      const nextIdx = queueIndex + 1;
+      if (nextIdx < queue.length) {
+        setQueueIndex(nextIdx);
+        loadTrack(queue[nextIdx]);
+      } else {
+        stop();
+      }
+    };
     const onTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
     const onLoadedMeta = () => setDuration(audio.duration || 0);
     const onError = () => {
@@ -139,7 +190,8 @@ function PlayerProvider({ children }) {
     <PlayerContext.Provider
       value={{
         track, loading, playing, ready, currentTime, duration, sheetOpen,
-        play, togglePlay, stop, seek, setSheetOpen,
+        play, playQueue, next, previous, hasNext, hasPrevious,
+        togglePlay, stop, seek, setSheetOpen,
       }}
     >
       {children}
@@ -851,7 +903,7 @@ function LibraryView({ nav }) {
 
 function MyPlaylistView({ id, nav }) {
   const { playlists, deletePlaylist, removeTrackFromPlaylist } = usePlaylists();
-  const { play } = usePlayer();
+  const { play, playQueue } = usePlayer();
   const playlist = playlists.find((p) => p.id === id);
 
   if (!playlist) return <EmptyState message="Playlist tidak ditemukan." />;
@@ -869,7 +921,7 @@ function MyPlaylistView({ id, nav }) {
           <p className="sleeve-artists">{playlist.tracks.length} lagu</p>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {playlist.tracks[0] && (
-              <button className="cta" onClick={() => play(playlist.tracks[0].id)}>▶️ Putar Semua</button>
+              <button className="cta" onClick={() => playQueue(playlist.tracks.map((t) => t.id), 0)}>▶️ Putar Semua</button>
             )}
             <button
               className="cta"
@@ -887,7 +939,7 @@ function MyPlaylistView({ id, nav }) {
         {playlist.tracks.length === 0 && <EmptyState message="Belum ada lagu di playlist ini." />}
         {playlist.tracks.map((t, i) => (
           <div key={t.id} className="track-line">
-            <span className="track-n mono">{(i + 1).toString().padStart(2, "0")}</span>
+            <button className="result-row-add" title="Putar dari sini" onClick={() => playQueue(playlist.tracks.map((tr) => tr.id), i)}>▶</button>
             {pickImage(t.album?.images) && <img className="row-thumb" src={pickImage(t.album?.images)} alt="" />}
             <button className="track-title link" style={{ textAlign: "left" }} onClick={() => nav("track", t.id)}>{t.name}<span className="track-sub"> — {artistNames(t.artists)}</span></button>
             <span className="track-dur mono">{fmtDuration(t.duration_ms)}</span>
@@ -1113,7 +1165,7 @@ function MiniPlayer() {
 
 /* ====================== Now Playing (tampilan penuh) ====================== */
 function NowPlayingSheet() {
-  const { track, sheetOpen, setSheetOpen, playing, ready, loading, currentTime, duration, togglePlay, stop, seek } = usePlayer();
+  const { track, sheetOpen, setSheetOpen, playing, ready, loading, currentTime, duration, togglePlay, stop, seek, next, previous, hasNext, hasPrevious } = usePlayer();
   const [showAddModal, setShowAddModal] = useState(false);
 
   if (!sheetOpen || !track) return null;
@@ -1158,11 +1210,13 @@ function NowPlayingSheet() {
       </div>
 
       <div className="now-playing-controls">
+        <button className="now-playing-skip" onClick={previous} disabled={!hasPrevious}>⏮</button>
         <button className="now-playing-play" onClick={togglePlay} disabled={!ready}>
           {loading ? "…" : playing ? "⏸️" : "▶️"}
         </button>
-        <button className="now-playing-stop" onClick={stop}>⏹️ Berhenti</button>
+        <button className="now-playing-skip" onClick={next} disabled={!hasNext}>⏭</button>
       </div>
+      <button className="now-playing-stop" onClick={stop} style={{ marginTop: 14 }}>⏹️ Berhenti</button>
 
       {showAddModal && <AddToPlaylistModal track={track} onClose={() => setShowAddModal(false)} />}
     </div>
@@ -1173,6 +1227,7 @@ function NowPlayingSheet() {
 const NAV_ITEMS = [
   { key: "home", label: "Home", icon: "⌂" },
   { key: "search", label: "Search", icon: "⌕" },
+  { key: "card", label: "Card", icon: "🎴" },
   { key: "library", label: "Library", icon: "▤" },
   { key: "info", label: "Info", icon: "ⓘ" },
 ];
@@ -1196,9 +1251,9 @@ function BottomNav({ current, nav }) {
 
 /* ====================== App Shell ====================== */
 // Tab-tab yang dianggap "root" untuk keperluan bottom nav (menentukan tab mana yang aktif)
-const TAB_OF = { home: "home", search: "search", library: "library", info: "info", mylist: "library" };
+const TAB_OF = { home: "home", search: "search", card: "card", library: "library", info: "info", mylist: "library" };
 
-const TAB_NAMES = ["home", "search", "library", "info"];
+const TAB_NAMES = ["home", "search", "card", "library", "info"];
 
 function AppShell() {
   const { track } = usePlayer();
@@ -1585,6 +1640,12 @@ function Styles() {
         border: none; font-size: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center;
       }
       .now-playing-play:disabled { opacity: 0.6; }
+      .now-playing-skip {
+        background: var(--surface-2); border: 1px solid var(--line); color: var(--text);
+        width: 44px; height: 44px; border-radius: 50%; font-size: 17px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .now-playing-skip:disabled { opacity: 0.35; cursor: default; }
       .now-playing-stop {
         background: var(--surface-2); border: 1px solid var(--line); color: var(--text);
         border-radius: 999px; padding: 12px 20px; cursor: pointer; font-weight: 600; font-size: 13.5px;
