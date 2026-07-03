@@ -729,6 +729,7 @@ function SearchView({ nav }) {
   const [query, setQuery] = useState(null);
   const [filter, setFilter] = useState("all");
   const [modalTrack, setModalTrack] = useState(null);
+  const { play } = usePlayer();
   const state = useApiFetch("spotify-search", query);
 
   const rows = [];
@@ -768,28 +769,37 @@ function SearchView({ nav }) {
         <div className="result-list">
           {rows.map((r, i) => {
             if (r.kind === "track") {
-              const t = r.data;
-              return (
-                <ResultRow
-                  key={t.uri || i}
-                  image={pickImage(t.album?.images)}
-                  title={t.name}
-                  subtitle={artistNames(t.artists)}
-                  meta={fmtDuration(t.duration_ms)}
-                  badge={t.explicit ? "E" : null}
-                  onClick={() => nav("track", t.id)}
-                  trailing={
-                    <button
-                      className="result-row-add"
-                      title="Tambah ke playlist"
-                      onClick={(e) => { e.stopPropagation(); setModalTrack(t); }}
-                    >
-                      +
-                    </button>
-                  }
-                />
-              );
-            }
+  const t = r.data;
+  return (
+    <ResultRow
+      key={t.uri || i}
+      image={pickImage(t.album?.images)}
+      title={t.name}
+      subtitle={artistNames(t.artists)}
+      meta={fmtDuration(t.duration_ms)}
+      badge={t.explicit ? "E" : null}
+      onClick={() => nav("track", t.id)}
+      trailing={
+        <div className="result-row-actions">
+          <button
+            className="result-row-play"
+            title="Putar"
+            onClick={(e) => { e.stopPropagation(); play(t.id, t); }}
+          >
+            <i className="fa-solid fa-play"></i>
+          </button>
+          <button
+            className="result-row-add"
+            title="Tambah ke playlist"
+            onClick={(e) => { e.stopPropagation(); setModalTrack(t); }}
+          >
+            +
+          </button>
+        </div>
+      }
+    />
+  );
+}
             if (r.kind === "album") {
               const a = r.data;
               return (
@@ -1751,6 +1761,14 @@ function Styles() {
       .filter-chip.active { background: var(--text); color: #14110E; border-color: var(--text); font-weight: 600; }
 
       /* RESULT LIST (baris vertikal) */
+      .result-row-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.result-row-play {
+  width: 30px; height: 30px; border-radius: 50%; border: none;
+  background: var(--accent); color: #14110E; font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.result-row-play:hover { filter: brightness(1.08); }
+
       .result-list { display: flex; flex-direction: column; }
       .result-row {
         display: flex; align-items: center; gap: 14px; padding: 10px 6px;
