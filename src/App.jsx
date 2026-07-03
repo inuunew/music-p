@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const API = "https://api.inuutyz.web.id/api/search";
+const API = "/api/spotify";
 
 /* ---------- helpers ---------- */
 
@@ -34,7 +34,7 @@ function artistNames(artists) {
 }
 
 async function apiGet(endpoint, q) {
-  const url = `${API}/${endpoint}?q=${encodeURIComponent(q)}`;
+  const url = `${API}?endpoint=${encodeURIComponent(endpoint)}&q=${encodeURIComponent(q)}`;
   const res = await fetch(url);
   const json = await res.json();
   if (!json || !json.status || !json.result) {
