@@ -6,30 +6,24 @@ const API = "/api/spotify";
 const PlayerContext = createContext(null);
 
 function PlayerProvider({ children }) {
-  const [track, setTrack] = useState(null); // { id, title, artist, cover, dl }
-  const [loading, setLoading] = useState(false); // status loading metadata/link
+  const [track, setTrack] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [ready, setReady] = useState(false); // audio siap diputar
+  const [ready, setReady] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [sheetOpen, setSheetOpen] = useState(false); // tampilan "Now Playing" penuh
-  const [queue, setQueue] = useState([]); // daftar id lagu yang sedang diputar berurutan
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(-1);
   const audioRef = useRef(null);
+  const retryCountRef = useRef(0);
+  const stallTimeoutRef = useRef(null);
 
-  // Mengambil metadata + link audio sebuah lagu dan memutarnya.
-  // Tidak menyentuh state antrean (queue) — dipakai baik untuk lagu tunggal
-  // maupun saat berpindah ke lagu berikutnya dalam antrean.
-  const loadTrack = useCallback(async (trackId, knownMeta = null) => {
+  const loadTrack = useCallback(async (trackId, knownMeta = null, isRetry = false) => {
+    if (!isRetry) retryCountRef.current = 0;
     setLoading(true);
     try {
-      // Mulai request link download DULUAN, jalan bersamaan dengan metadata
-      // (dua-duanya independen, tidak perlu nunggu satu sama lain).
-      const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
-      const dlPromise = fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
-
-      // Kalau metadata sudah diketahui dari pemanggil (hasil search / detail / playlist),
-      // tidak perlu fetch ulang — langsung hemat 1 round-trip.
+      // Kalau metadata belum diketahui, ambil DULU (sekuensial, aman dari tabrakan backend)
       let t = knownMeta;
       if (!t) {
         const metaJson = await fetch(`${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`).then((r) => r.json());
@@ -41,15 +35,16 @@ function PlayerProvider({ children }) {
         t = metaJson.result;
       }
 
-      const dlJson = await dlPromise;
-      console.log("Response download:", dlJson);
+      // Baru ambil link download SETELAH metadata selesai
+      const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
+      const dlJson = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
+
       if (!dlJson?.status || !dlJson.result?.dl) {
         alert("Gagal mendapatkan link audio.");
         setLoading(false);
         return;
       }
 
-      // Set track (efek di bawah akan menangani pemutaran)
       setTrack({
         id: t.id || trackId,
         title: t.name || t.title,
@@ -58,9 +53,6 @@ function PlayerProvider({ children }) {
         album: t.album?.name || t.album || null,
         dl: dlJson.result.dl,
       });
-      // Sheet TIDAK dibuka otomatis di sini — hanya mini player yang muncul.
-      // Sheet penuh baru terbuka saat pengguna mengetuk mini player.
-      // loading akan dimatikan setelah audio benar-benar siap
     } catch (err) {
       console.error(err);
       alert("Terjadi kesalahan saat memuat lagu.");
@@ -68,17 +60,12 @@ function PlayerProvider({ children }) {
     }
   }, []);
 
-  // Putar satu lagu tunggal (di luar konteks playlist). `meta` opsional —
-  // kalau pemanggil sudah punya data lagunya, kirim supaya lebih cepat.
   const play = useCallback((trackId, meta = null) => {
     setQueue([{ id: trackId, meta }]);
     setQueueIndex(0);
     loadTrack(trackId, meta);
   }, [loadTrack]);
 
-  // Putar sekumpulan lagu berurutan (mis. dari playlist), mulai dari startIndex.
-  // `tracks` menerima array objek lagu lengkap (bukan cuma id) supaya metadata
-  // yang sudah ada (dari playlist) tidak perlu di-fetch ulang.
   const playQueue = useCallback((tracks, startIndex = 0) => {
     if (!tracks || !tracks.length) return;
     const entries = tracks.map((t) => ({ id: t.id, meta: t }));
@@ -122,6 +109,7 @@ function PlayerProvider({ children }) {
   }, []);
 
   const stop = useCallback(() => {
+    if (stallTimeoutRef.current) clearTimeout(stallTimeoutRef.current);
     if (!audioRef.current) return;
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
@@ -136,45 +124,25 @@ function PlayerProvider({ children }) {
     setQueueIndex(-1);
   }, []);
 
-  // ====== Media Session API: kontrol di lock screen / notifikasi ======
-  // Dibungkus try/catch di semua sisi — kalau browser tidak mendukung penuh
-  // (mis. action tertentu tidak dikenal), fitur ini gagal diam-diam dan
-  // TIDAK BOLEH ikut mematahkan pemutaran lagu.
+  // ====== Media Session API — TIDAK BERUBAH, tetap sama seperti kode asli kamu ======
   useEffect(() => {
     if (!track) return;
     if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
-
     const setHandler = (action, handler) => {
-      try {
-        navigator.mediaSession.setActionHandler(action, handler);
-      } catch (e) {
-        // Action ini tidak didukung browser — abaikan saja.
-      }
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch (e) {}
     };
-
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title,
         artist: track.artist,
         album: track.album || "Piringan",
         artwork: track.cover
-          ? [64, 96, 128, 192, 256, 384, 512].map((size) => ({
-              src: track.cover,
-              sizes: `${size}x${size}`,
-              type: "image/jpeg",
-            }))
+          ? [64, 96, 128, 192, 256, 384, 512].map((size) => ({ src: track.cover, sizes: `${size}x${size}`, type: "image/jpeg" }))
           : [],
       });
-    } catch (e) {
-      console.warn("Media Session metadata gagal diset:", e);
-    }
-
-    setHandler("play", () => {
-      audioRef.current?.play().catch(() => {});
-    });
-    setHandler("pause", () => {
-      audioRef.current?.pause();
-    });
+    } catch (e) { console.warn("Media Session metadata gagal diset:", e); }
+    setHandler("play", () => { audioRef.current?.play().catch(() => {}); });
+    setHandler("pause", () => { audioRef.current?.pause(); });
     setHandler("stop", () => stop());
     setHandler("previoustrack", hasPrevious ? () => previous() : null);
     setHandler("nexttrack", hasNext ? () => next() : null);
@@ -184,18 +152,13 @@ function PlayerProvider({ children }) {
         setCurrentTime(details.seekTime);
       }
     });
-
     return () => {
-      // Bersihkan handler saat lagu berganti/berhenti agar tidak nyangkut ke lagu lama
       ["play", "pause", "stop", "previoustrack", "nexttrack", "seekto"].forEach((action) => {
-        try {
-          navigator.mediaSession.setActionHandler(action, null);
-        } catch (e) {}
+        try { navigator.mediaSession.setActionHandler(action, null); } catch (e) {}
       });
     };
   }, [track?.id, hasNext, hasPrevious, next, previous, stop]);
 
-  // Sinkronkan status play/pause ke lock screen
   useEffect(() => {
     try {
       if (!("mediaSession" in navigator)) return;
@@ -203,25 +166,45 @@ function PlayerProvider({ children }) {
     } catch (e) {}
   }, [playing]);
 
-  // Sinkronkan posisi/progress ke lock screen (kalau didukung)
   useEffect(() => {
     if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
     if (!ready || !duration) return;
     try {
-      navigator.mediaSession.setPositionState({
-        duration,
-        playbackRate: 1,
-        position: Math.min(currentTime, duration),
-      });
+      navigator.mediaSession.setPositionState({ duration, playbackRate: 1, position: Math.min(currentTime, duration) });
     } catch (e) {}
   }, [currentTime, duration, ready]);
 
-  // Pasang ulang listener setiap kali sumber lagu berganti
+  // ====== Pemasangan listener + retry & stall-timeout ======
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !track) return;
 
+    const clearStallTimeout = () => {
+      if (stallTimeoutRef.current) {
+        clearTimeout(stallTimeoutRef.current);
+        stallTimeoutRef.current = null;
+      }
+    };
+
+    const handleFailure = () => {
+      if (retryCountRef.current < 1) {
+        retryCountRef.current += 1;
+        console.warn("Audio gagal/macet, mencoba ambil link baru... (percobaan ke-", retryCountRef.current, ")");
+        loadTrack(track.id, {
+          id: track.id, name: track.title,
+          artists: [{ name: track.artist }],
+          album: { name: track.album, images: track.cover ? [{ url: track.cover }] : [] }
+        }, true);
+      } else {
+        console.error("Audio tetap gagal setelah retry.");
+        alert("Tidak dapat memutar lagu setelah beberapa percobaan. Coba lagi nanti.");
+        setLoading(false);
+        setReady(false);
+      }
+    };
+
     const onCanPlay = () => {
+      clearStallTimeout();
       setReady(true);
       setLoading(false);
       audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
@@ -229,7 +212,6 @@ function PlayerProvider({ children }) {
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onEnded = () => {
-      // Otomatis lanjut ke lagu berikutnya dalam antrean (playlist), jika ada.
       const nextIdx = queueIndex + 1;
       if (nextIdx < queue.length) {
         setQueueIndex(nextIdx);
@@ -241,10 +223,8 @@ function PlayerProvider({ children }) {
     const onTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
     const onLoadedMeta = () => setDuration(audio.duration || 0);
     const onError = () => {
-      console.error("Audio error");
-      alert("Tidak dapat memutar lagu. Coba lagi nanti.");
-      setLoading(false);
-      setReady(false);
+      clearStallTimeout();
+      handleFailure();
     };
 
     audio.addEventListener("canplay", onCanPlay);
@@ -261,7 +241,16 @@ function PlayerProvider({ children }) {
     setCurrentTime(0);
     setLoading(true);
 
+    clearStallTimeout();
+    stallTimeoutRef.current = setTimeout(() => {
+      if (audio.readyState < 3) {
+        console.warn("Audio stall timeout tercapai.");
+        handleFailure();
+      }
+    }, 12000);
+
     return () => {
+      clearStallTimeout();
       audio.removeEventListener("canplay", onCanPlay);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
@@ -282,7 +271,8 @@ function PlayerProvider({ children }) {
       }}
     >
       {children}
-      <audio ref={audioRef} style={{ display: "none" }} referrerPolicy="no-referrer" />
+      <audio ref={audioRef} style={{ display: "none" }} />
+    </PlayerContext.Provider>
   );
 }
 
