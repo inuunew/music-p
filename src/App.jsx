@@ -20,25 +20,28 @@ function PlayerProvider({ children }) {
   // Mengambil metadata + link audio sebuah lagu dan memutarnya.
   // Tidak menyentuh state antrean (queue) — dipakai baik untuk lagu tunggal
   // maupun saat berpindah ke lagu berikutnya dalam antrean.
-  const loadTrack = useCallback(async (trackId) => {
+  const loadTrack = useCallback(async (trackId, knownMeta = null) => {
     setLoading(true);
     try {
-      // 1. Ambil metadata dari API internal
-      const metaRes = await fetch(`${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`);
-      const metaJson = await metaRes.json();
-      if (!metaJson?.status || !metaJson.result) {
-        alert("Gagal memuat metadata lagu.");
-        setLoading(false);
-        return;
-      }
-      const t = metaJson.result;
-
-      // 2. Ambil link download lewat proxy
+      // Mulai request link download DULUAN, jalan bersamaan dengan metadata
+      // (dua-duanya independen, tidak perlu nunggu satu sama lain).
       const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
-      const dlRes = await fetch(
-        `${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`
-      );
-      const dlJson = await dlRes.json();
+      const dlPromise = fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
+
+      // Kalau metadata sudah diketahui dari pemanggil (hasil search / detail / playlist),
+      // tidak perlu fetch ulang — langsung hemat 1 round-trip.
+      let t = knownMeta;
+      if (!t) {
+        const metaJson = await fetch(`${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`).then((r) => r.json());
+        if (!metaJson?.status || !metaJson.result) {
+          alert("Gagal memuat metadata lagu.");
+          setLoading(false);
+          return;
+        }
+        t = metaJson.result;
+      }
+
+      const dlJson = await dlPromise;
       console.log("Response download:", dlJson);
       if (!dlJson?.status || !dlJson.result?.dl) {
         alert("Gagal mendapatkan link audio.");
@@ -46,13 +49,13 @@ function PlayerProvider({ children }) {
         return;
       }
 
-      // 3. Set track (efek di bawah akan menangani pemutaran)
+      // Set track (efek di bawah akan menangani pemutaran)
       setTrack({
-        id: t.id,
-        title: t.name,
+        id: t.id || trackId,
+        title: t.name || t.title,
         artist: t.artists?.map((a) => a.name).join(", ") || "Tidak diketahui",
-        cover: t.album?.images?.[0]?.url || null,
-        album: t.album?.name || null,
+        cover: t.album?.images?.[0]?.url || t.cover || null,
+        album: t.album?.name || t.album || null,
         dl: dlJson.result.dl,
       });
       // Sheet TIDAK dibuka otomatis di sini — hanya mini player yang muncul.
@@ -65,26 +68,30 @@ function PlayerProvider({ children }) {
     }
   }, []);
 
-  // Putar satu lagu tunggal (di luar konteks playlist)
-  const play = useCallback((trackId) => {
-    setQueue([trackId]);
+  // Putar satu lagu tunggal (di luar konteks playlist). `meta` opsional —
+  // kalau pemanggil sudah punya data lagunya, kirim supaya lebih cepat.
+  const play = useCallback((trackId, meta = null) => {
+    setQueue([{ id: trackId, meta }]);
     setQueueIndex(0);
-    loadTrack(trackId);
+    loadTrack(trackId, meta);
   }, [loadTrack]);
 
-  // Putar sekumpulan lagu berurutan (mis. dari playlist), mulai dari startIndex
-  const playQueue = useCallback((trackIds, startIndex = 0) => {
-    if (!trackIds || !trackIds.length) return;
-    setQueue(trackIds);
+  // Putar sekumpulan lagu berurutan (mis. dari playlist), mulai dari startIndex.
+  // `tracks` menerima array objek lagu lengkap (bukan cuma id) supaya metadata
+  // yang sudah ada (dari playlist) tidak perlu di-fetch ulang.
+  const playQueue = useCallback((tracks, startIndex = 0) => {
+    if (!tracks || !tracks.length) return;
+    const entries = tracks.map((t) => ({ id: t.id, meta: t }));
+    setQueue(entries);
     setQueueIndex(startIndex);
-    loadTrack(trackIds[startIndex]);
+    loadTrack(entries[startIndex].id, entries[startIndex].meta);
   }, [loadTrack]);
 
   const next = useCallback(() => {
     const nextIdx = queueIndex + 1;
     if (nextIdx < queue.length) {
       setQueueIndex(nextIdx);
-      loadTrack(queue[nextIdx]);
+      loadTrack(queue[nextIdx].id, queue[nextIdx].meta);
     }
   }, [queue, queueIndex, loadTrack]);
 
@@ -92,7 +99,7 @@ function PlayerProvider({ children }) {
     const prevIdx = queueIndex - 1;
     if (prevIdx >= 0) {
       setQueueIndex(prevIdx);
-      loadTrack(queue[prevIdx]);
+      loadTrack(queue[prevIdx].id, queue[prevIdx].meta);
     }
   }, [queue, queueIndex, loadTrack]);
 
@@ -226,7 +233,7 @@ function PlayerProvider({ children }) {
       const nextIdx = queueIndex + 1;
       if (nextIdx < queue.length) {
         setQueueIndex(nextIdx);
-        loadTrack(queue[nextIdx]);
+        loadTrack(queue[nextIdx].id, queue[nextIdx].meta);
       } else {
         stop();
       }
@@ -275,8 +282,7 @@ function PlayerProvider({ children }) {
       }}
     >
       {children}
-      <audio ref={audioRef} style={{ display: "none" }} />
-    </PlayerContext.Provider>
+      <audio ref={audioRef} style={{ display: "none" }} referrerPolicy="no-referrer" />
   );
 }
 
@@ -851,7 +857,7 @@ function TrackDetailView({ id, nav }) {
             {t.artists.map((a) => <button key={a.uri} className="pill" onClick={() => nav("artist", a.id)}>{a.name}</button>)}
           </div>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <button className="cta" onClick={() => play(t.id)}><i className="fa-solid fa-play"></i> Putar Lagu</button>
+            <button className="cta" onClick={() => play(t.id, t)}><i className="fa-solid fa-play"></i> Putar Lagu</button>
             <button className="cta" style={{ background: "var(--surface-2)" }} onClick={() => setShowAddModal(true)}>+ Tambah ke Playlist</button>
             <button className="cta" style={{ background: "var(--surface-2)" }} onClick={() => nav("card", t.id)}>Bikin kartu bagikan ↗</button>
           </div>
@@ -1057,7 +1063,7 @@ function MyPlaylistView({ id, nav }) {
           <p className="sleeve-artists">{playlist.tracks.length} lagu</p>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {playlist.tracks[0] && (
-              <button className="cta" onClick={() => playQueue(playlist.tracks.map((t) => t.id), 0)}><i className="fa-solid fa-play"></i> Putar Semua</button>
+              <button className="cta" onClick={() => playQueue(playlist.tracks, 0)}><i className="fa-solid fa-play"></i> Putar Semua</button>
             )}
             <button
               className="cta"
@@ -1075,7 +1081,7 @@ function MyPlaylistView({ id, nav }) {
         {playlist.tracks.length === 0 && <EmptyState message="Belum ada lagu di playlist ini." />}
         {playlist.tracks.map((t, i) => (
           <div key={t.id} className="track-line">
-            <button className="result-row-add" title="Putar dari sini" onClick={() => playQueue(playlist.tracks.map((tr) => tr.id), i)}><i className="fa-solid fa-play"></i></button>
+            <button className="result-row-add" title="Putar dari sini" onClick={() => playQueue(playlist.tracks, i)}><i className="fa-solid fa-play"></i></button>
             {pickImage(t.album?.images) && <img className="row-thumb" src={pickImage(t.album?.images)} alt="" />}
             <button className="track-title link" style={{ textAlign: "left" }} onClick={() => nav("track", t.id)}>{t.name}<span className="track-sub"> — {artistNames(t.artists)}</span></button>
             <span className="track-dur mono">{fmtDuration(t.duration_ms)}</span>
