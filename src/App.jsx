@@ -18,10 +18,14 @@ function PlayerProvider({ children }) {
   const audioRef = useRef(null);
   const retryCountRef = useRef(0);
   const stallTimeoutRef = useRef(null);
+  const previewRetryRef = useRef(false);
 
   const loadTrack = useCallback(async (trackId, knownMeta = null, isRetry = false) => {
-    if (!isRetry) retryCountRef.current = 0;
-    setLoading(true);
+  if (!isRetry) {
+    retryCountRef.current = 0;
+    previewRetryRef.current = false; // tambahkan ini
+  }
+  setLoading(true);
     try {
       // Kalau metadata belum diketahui, ambil DULU (sekuensial, aman dari tabrakan backend)
       let t = knownMeta;
@@ -221,7 +225,21 @@ function PlayerProvider({ children }) {
       }
     };
     const onTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
-    const onLoadedMeta = () => setDuration(audio.duration || 0);
+    const onLoadedMeta = () => {
+  const dur = audio.duration || 0;
+  setDuration(dur);
+
+  // Deteksi kemungkinan preview URL (biasanya ~29-30 detik)
+  if (dur > 0 && dur < 35 && !previewRetryRef.current) {
+    previewRetryRef.current = true;
+    console.warn("Terdeteksi kemungkinan link preview (durasi pendek), mencoba ambil ulang link full...");
+    loadTrack(track.id, {
+      id: track.id, name: track.title,
+      artists: [{ name: track.artist }],
+      album: { name: track.album, images: track.cover ? [{ url: track.cover }] : [] }
+    }, true);
+  }
+};
     const onError = () => {
       clearStallTimeout();
       handleFailure();
