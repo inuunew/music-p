@@ -1,8 +1,92 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 
 const API = "/api/spotify";
 
-/* ---------- helpers ---------- */
+/* ====================== Player Context ====================== */
+
+const PlayerContext = createContext(null);
+
+function PlayerProvider({ children }) {
+  const [track, setTrack] = useState(null); // { id, title, artist, cover, dl }
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef(new Audio());
+
+  // fungsi untuk mengambil link download & memutar
+  const play = useCallback(async (trackId) => {
+    // 1. Ambil metadata dari API internal kamu
+    const metaRes = await fetch(
+      `${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`
+    );
+    const metaJson = await metaRes.json();
+    if (!metaJson?.status || !metaJson.result) {
+      alert("Gagal memuat metadata lagu.");
+      return;
+    }
+    const t = metaJson.result;
+
+    // 2. Ambil link download dari API Spotify Download
+    const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
+    const dlRes = await fetch(
+      `https://api.inuutyz.web.id/api/download/spotify-dl?url=${encodeURIComponent(spotifyUrl)}`
+    );
+    const dlJson = await dlRes.json();
+    if (!dlJson?.status || !dlJson.result?.dl) {
+      alert("Gagal mendapatkan link audio.");
+      return;
+    }
+
+    const audioUrl = dlJson.result.dl;
+
+    // 3. Simpan data lagu & putar
+    const newTrack = {
+      id: t.id,
+      title: t.name,
+      artist: t.artists?.map((a) => a.name).join(", ") || "Tidak diketahui",
+      cover: t.album?.images?.[0]?.url || null,
+      dl: audioUrl,
+    };
+    setTrack(newTrack);
+    audioRef.current.src = audioUrl;
+    audioRef.current.play();
+    setPlaying(true);
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    if (!track) return;
+    if (playing) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+    setPlaying(!playing);
+  }, [track, playing]);
+
+  const stop = useCallback(() => {
+    audioRef.current.pause();
+    audioRef.current.src = "";
+    setTrack(null);
+    setPlaying(false);
+  }, []);
+
+  // event listener
+  audioRef.current.onended = () => setPlaying(false);
+  audioRef.current.onerror = () => {
+    alert("Gagal memutar audio.");
+    stop();
+  };
+
+  return (
+    <PlayerContext.Provider value={{ track, playing, play, togglePlay, stop }}>
+      {children}
+    </PlayerContext.Provider>
+  );
+}
+
+function usePlayer() {
+  return useContext(PlayerContext);
+}
+
+/* ====================== helpers ====================== */
 
 function fmtDuration(ms) {
   if (!ms && ms !== 0) return "--:--";
@@ -69,7 +153,7 @@ function useApiFetch(endpoint, query) {
   return state;
 }
 
-/* ---------- signature visual: vinyl disc ---------- */
+/* ====================== Vinyl Disc & Atoms ====================== */
 
 function VinylDisc({ size = 40, spinning = false, cover = null }) {
   return (
@@ -98,8 +182,6 @@ function VinylDisc({ size = 40, spinning = false, cover = null }) {
     </div>
   );
 }
-
-/* ---------- small ui atoms ---------- */
 
 function Chip({ children, tone = "muted" }) {
   return <span className={`chip chip-${tone}`}>{children}</span>;
@@ -141,7 +223,7 @@ function EmptyState({ message }) {
   );
 }
 
-/* ---------- cards ---------- */
+/* ====================== Cards & Crate ====================== */
 
 function EntityCard({ image, title, subtitle, meta, round, badge, onClick }) {
   return (
@@ -167,7 +249,7 @@ function CrateRow({ n, title, items, render }) {
   );
 }
 
-/* ---------- search ---------- */
+/* ====================== Search ====================== */
 
 function SearchBar({ value, onChange, onSubmit, autoFocus }) {
   return (
@@ -190,7 +272,7 @@ function SearchBar({ value, onChange, onSubmit, autoFocus }) {
   );
 }
 
-/* ---------- views ---------- */
+/* ====================== Views ====================== */
 
 function HomeView({ nav }) {
   const [input, setInput] = useState("");
@@ -369,6 +451,7 @@ function ResultsCrates({ data, query, nav }) {
 }
 
 function TrackDetailView({ id, nav }) {
+  const { play } = usePlayer(); // <-- gunakan player
   const state = useApiFetch("spotify-track", id);
   if (state.status === "loading" || state.status === "idle") return <LoadingState />;
   if (state.status === "error") return <ErrorState message={state.error} />;
@@ -414,9 +497,14 @@ function TrackDetailView({ id, nav }) {
               </button>
             ))}
           </div>
-          <button className="cta" onClick={() => nav("card", t.id)}>
-            Bikin kartu bagikan ↗
-          </button>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+            <button className="cta" onClick={() => play(t.id)}>
+              ▶️ Putar Lagu
+            </button>
+            <button className="cta" style={{ background: "var(--surface-2)" }} onClick={() => nav("card", t.id)}>
+              Bikin kartu bagikan ↗
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -545,7 +633,6 @@ function PlaylistDetailView({ id, nav }) {
         <div className="sleeve-info">
           <Chip tone="accent">Playlist</Chip>
           <h1>{p.name}</h1>
-          {p.description && <p className="sleeve-artists" dangerouslySetInnerHTML={{ __html: "" }} />}
           {p.description && <p className="sleeve-desc">{p.description.replace(/<[^>]+>/g, "")}</p>}
           <div className="meta-grid">
             <div>
@@ -579,7 +666,7 @@ function PlaylistDetailView({ id, nav }) {
   );
 }
 
-/* ---------- card maker (browser-side, no server render) ---------- */
+/* ====================== Card Maker ====================== */
 
 function CardMakerView({ presetId, nav }) {
   const [input, setInput] = useState("");
@@ -763,9 +850,34 @@ function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
   return lines;
 }
 
-/* ---------- app shell ---------- */
+/* ====================== Mini Player ====================== */
 
-export default function App() {
+function MiniPlayer() {
+  const { track, playing, togglePlay, stop } = usePlayer();
+  if (!track) return null;
+
+  return (
+    <div className="mini-player">
+      <div className="mini-player-info">
+        {track.cover && <img src={track.cover} alt="" />}
+        <div>
+          <div className="mini-player-title">{track.title}</div>
+          <div className="mini-player-artist">{track.artist}</div>
+        </div>
+      </div>
+      <div className="mini-player-controls">
+        <button onClick={togglePlay}>
+          {playing ? "⏸️ Jeda" : "▶️ Putar"}
+        </button>
+        <button onClick={stop}>⏹️ Berhenti</button>
+      </div>
+    </div>
+  );
+}
+
+/* ====================== App Shell ====================== */
+
+function AppShell() {
   const [view, setView] = useState({ name: "home" });
 
   const nav = (name, id) => {
@@ -801,6 +913,7 @@ export default function App() {
         {view.name === "card" && <CardMakerView presetId={view.id} nav={nav} />}
       </main>
 
+      <MiniPlayer />
       <footer className="footer">
         <span>Piringan · katalog metadata, bukan pemutar. Musiknya tetap ada di rumahnya.</span>
       </footer>
@@ -809,6 +922,16 @@ export default function App() {
     </div>
   );
 }
+
+export default function App() {
+  return (
+    <PlayerProvider>
+      <AppShell />
+    </PlayerProvider>
+  );
+}
+
+/* ====================== Fonts & Styles ====================== */
 
 function Fonts() {
   return (
@@ -1007,12 +1130,40 @@ function Styles() {
       .card-preview-artist { color: rgba(243,233,216,0.75); font-size: 14px; }
       .card-preview-brand { margin-top: auto; font-family: 'IBM Plex Mono'; font-size: 12px; color: rgba(243,233,216,0.5); }
 
+      /* ===== MINI PLAYER ===== */
+      .mini-player {
+        position: fixed; bottom: 0; left: 0; right: 0;
+        background: var(--surface);
+        border-top: 1px solid var(--line);
+        padding: 10px 24px;
+        display: flex; align-items: center; justify-content: space-between;
+        backdrop-filter: blur(8px);
+        z-index: 20;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .mini-player-info { display: flex; align-items: center; gap: 12px; min-width: 0; }
+      .mini-player-info img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; }
+      .mini-player-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+      .mini-player-artist { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+      .mini-player-controls { display: flex; gap: 8px; flex-shrink: 0; }
+      .mini-player-controls button {
+        background: var(--accent); color: #14110E; border: none;
+        border-radius: 999px; padding: 8px 16px; cursor: pointer; font-weight: 600;
+        font-size: 13px;
+      }
+      .mini-player-controls button:last-child {
+        background: var(--surface-2);
+        color: var(--text);
+      }
+
       .footer { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12.5px; border-top: 1px solid var(--line); }
 
       @media (max-width: 640px) {
         .topbar { padding: 14px 16px; }
         main { padding: 0 16px 60px; }
         .sleeve-art { width: 100%; height: 320px; }
+        .mini-player { padding: 10px 16px; }
       }
     `}</style>
   );
