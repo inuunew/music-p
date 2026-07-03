@@ -2,46 +2,54 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 
 const API = "/api/spotify";
 
-/* ====================== Player Context ====================== */
+/* ====================== Player Context (diperbarui) ====================== */
 const PlayerContext = createContext(null);
 
 function PlayerProvider({ children }) {
   const [track, setTrack] = useState(null); // { id, title, artist, cover, dl }
-  const audioRef = useRef(null); // akan diisi oleh elemen <audio> di MiniPlayer
+  const [loading, setLoading] = useState(false); // ⬅️ baru: status loading
+  const audioRef = useRef(null);
 
   const play = useCallback(async (trackId) => {
-    // 1. Ambil metadata dari API internal
-    const metaRes = await fetch(`${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`);
-    const metaJson = await metaRes.json();
-    if (!metaJson?.status || !metaJson.result) {
-      alert("Gagal memuat metadata lagu.");
-      return;
+    setLoading(true);
+    try {
+      // 1. Ambil metadata dari API internal
+      const metaRes = await fetch(`${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`);
+      const metaJson = await metaRes.json();
+      if (!metaJson?.status || !metaJson.result) {
+        alert("Gagal memuat metadata lagu.");
+        setLoading(false);
+        return;
+      }
+      const t = metaJson.result;
+
+      // 2. Ambil link download lewat proxy
+      const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
+      const dlRes = await fetch(
+        `${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`
+      );
+      const dlJson = await dlRes.json();
+      console.log("Response download:", dlJson);
+      if (!dlJson?.status || !dlJson.result?.dl) {
+        alert("Gagal mendapatkan link audio.");
+        setLoading(false);
+        return;
+      }
+
+      // 3. Set track (MiniPlayer akan menangani pemutaran)
+      setTrack({
+        id: t.id,
+        title: t.name,
+        artist: t.artists?.map((a) => a.name).join(", ") || "Tidak diketahui",
+        cover: t.album?.images?.[0]?.url || null,
+        dl: dlJson.result.dl,
+      });
+      // loading akan dimatikan setelah audio benar-benar siap (di MiniPlayer)
+    } catch (err) {
+      console.error(err);
+      alert("Terjadi kesalahan saat memuat lagu.");
+      setLoading(false);
     }
-    const t = metaJson.result;
-
-    // 2. Ambil link download dari API Spotify Download
-    const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
-    // ✅ lewat server‑side proxy
-const dlRes = await fetch(
-  `/api/spotify?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`
-);
-    const dlJson = await dlRes.json();
-    console.log("Response download:", dlJson);
-    if (!dlJson?.status || !dlJson.result?.dl) {
-      alert("Gagal mendapatkan link audio.");
-      return;
-    }
-
-    const audioUrl = dlJson.result.dl;
-
-    // Simpan data lagu (audio akan dimulai oleh useEffect di MiniPlayer)
-    setTrack({
-      id: t.id,
-      title: t.name,
-      artist: t.artists?.map((a) => a.name).join(", ") || "Tidak diketahui",
-      cover: t.album?.images?.[0]?.url || null,
-      dl: audioUrl,
-    });
   }, []);
 
   const togglePlay = useCallback(() => {
@@ -58,10 +66,11 @@ const dlRes = await fetch(
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
     setTrack(null);
+    setLoading(false);
   }, []);
 
   return (
-    <PlayerContext.Provider value={{ track, play, togglePlay, stop, audioRef }}>
+    <PlayerContext.Provider value={{ track, loading, play, togglePlay, stop, audioRef, setLoading }}>
       {children}
     </PlayerContext.Provider>
   );
@@ -72,6 +81,7 @@ function usePlayer() {
 }
 
 /* ====================== helpers ====================== */
+// ... (semua helper function tetap sama: fmtDuration, fmtNumber, pickImage, artistNames, apiGet, useApiFetch)
 function fmtDuration(ms) {
   if (!ms && ms !== 0) return "--:--";
   const s = Math.floor(ms / 1000);
@@ -138,12 +148,10 @@ function useApiFetch(endpoint, query) {
 }
 
 /* ====================== Vinyl Disc & Atoms ====================== */
+// ... (VinylDisc, Chip, CatalogLabel, LoadingState, ErrorState, EmptyState tidak berubah)
 function VinylDisc({ size = 40, spinning = false, cover = null }) {
   return (
-    <div
-      className="disc"
-      style={{ width: size, height: size, animationPlayState: spinning ? "running" : "paused" }}
-    >
+    <div className="disc" style={{ width: size, height: size, animationPlayState: spinning ? "running" : "paused" }}>
       <svg viewBox="0 0 100 100" width="100%" height="100%">
         <circle cx="50" cy="50" r="49" fill="#0E0C0A" />
         <circle cx="50" cy="50" r="49" fill="none" stroke="#3A322A" strokeWidth="0.6" />
@@ -207,6 +215,7 @@ function EmptyState({ message }) {
 }
 
 /* ====================== Cards & Crate ====================== */
+// ... (EntityCard, CrateRow tetap sama)
 function EntityCard({ image, title, subtitle, meta, round, badge, onClick }) {
   return (
     <button className="e-card" onClick={onClick} disabled={!onClick}>
@@ -232,28 +241,19 @@ function CrateRow({ n, title, items, render }) {
 }
 
 /* ====================== Search ====================== */
+// ... (SearchBar tetap sama)
 function SearchBar({ value, onChange, onSubmit, autoFocus }) {
   return (
-    <form
-      className="search-bar"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit(value.trim());
-      }}
-    >
+    <form className="search-bar" onSubmit={(e) => { e.preventDefault(); onSubmit(value.trim()); }}>
       <span className="search-icon">⌕</span>
-      <input
-        autoFocus={autoFocus}
-        placeholder="Cari lagu, album, artis, atau playlist…"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <input autoFocus={autoFocus} placeholder="Cari lagu, album, artis, atau playlist…" value={value} onChange={(e) => onChange(e.target.value)} />
       <button type="submit">Cari</button>
     </form>
   );
 }
 
 /* ====================== Views ====================== */
+// ... (HomeView, ResultsCrates, TrackDetailView, AlbumDetailView, ArtistDetailView, PlaylistDetailView, CardMakerView tidak berubah, tapi pastikan di TrackDetailView tombol "Putar Lagu" memanggil play dari context)
 function HomeView({ nav }) {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState(null);
@@ -263,32 +263,18 @@ function HomeView({ nav }) {
     <div className="view">
       <div className="hero">
         <VinylDisc size={84} spinning={state.status === "loading"} />
-        <h1>
-          Buka sampul, <em>putar sesuatu</em>.
-        </h1>
-        <p className="hero-sub">
-          Telusuri katalog Spotify — lagu, album, artis, dan playlist — disusun seperti krat piringan hitam.
-        </p>
-        <SearchBar
-          value={input}
-          onChange={setInput}
-          onSubmit={(q) => q && setQuery(q)}
-          autoFocus
-        />
+        <h1>Buka sampul, <em>putar sesuatu</em>.</h1>
+        <p className="hero-sub">Telusuri katalog Spotify — lagu, album, artis, dan playlist — disusun seperti krat piringan hitam.</p>
+        <SearchBar value={input} onChange={setInput} onSubmit={(q) => q && setQuery(q)} autoFocus />
       </div>
-
       {query && state.status === "loading" && <LoadingState label={`Menyisir katalog untuk "${query}"…`} />}
       {query && state.status === "error" && <ErrorState message={state.error} />}
-      {query && state.status === "success" && (
-        <ResultsCrates data={state.data} query={query} nav={nav} />
-      )}
+      {query && state.status === "success" && <ResultsCrates data={state.data} query={query} nav={nav} />}
       {!query && (
         <div className="hint-row">
           <span>Coba:</span>
           {["Melukis Senja", "Fynn Jamal", "Budi Doremi"].map((s) => (
-            <button key={s} className="hint-chip" onClick={() => { setInput(s); setQuery(s); }}>
-              {s}
-            </button>
+            <button key={s} className="hint-chip" onClick={() => { setInput(s); setQuery(s); }}>{s}</button>
           ))}
         </div>
       )}
@@ -297,59 +283,23 @@ function HomeView({ nav }) {
 }
 
 function ResultsCrates({ data, query, nav }) {
-  const anyResults =
-    (data.top_results && data.top_results.length) ||
-    (data.tracks && data.tracks.length) ||
-    (data.albums && data.albums.length) ||
-    (data.artists && data.artists.length) ||
-    (data.playlists && data.playlists.length) ||
-    (data.episodes && data.episodes.length) ||
-    (data.podcasts && data.podcasts.length) ||
-    (data.genres && data.genres.length) ||
-    (data.users && data.users.length);
-
+  const anyResults = (data.top_results?.length || data.tracks?.length || data.albums?.length || data.artists?.length || data.playlists?.length || data.episodes?.length || data.podcasts?.length || data.genres?.length || data.users?.length);
   if (!anyResults) return <EmptyState message={`Tidak ada yang cocok dengan "${query}".`} />;
 
   return (
     <div className="crates">
-      {/* ... (CrateRow untuk setiap kategori, tidak ada perubahan) ... */}
       <CrateRow n="00" title="Hasil Teratas" items={data.top_results} render={(item, i) => {
           const clickable = ["Track", "Album", "Artist", "Playlist"].includes(item.type);
-          return (
-            <EntityCard
-              key={item.uri + i}
-              image={pickImage(item.images)}
-              title={item.name || "Tanpa nama"}
-              subtitle={item.type}
-              round={item.type === "Artist"}
-              onClick={clickable ? () => nav(item.type.toLowerCase(), item.id) : undefined}
-            />
-          );
+          return <EntityCard key={item.uri + i} image={pickImage(item.images)} title={item.name || "Tanpa nama"} subtitle={item.type} round={item.type === "Artist"} onClick={clickable ? () => nav(item.type.toLowerCase(), item.id) : undefined} />;
         }} />
-      <CrateRow n="01" title="Lagu" items={data.tracks} render={(t) => (
-          <EntityCard key={t.uri} image={pickImage(t.album?.images)} title={t.name} subtitle={artistNames(t.artists)} meta={fmtDuration(t.duration_ms)} badge={t.explicit ? "E" : null} onClick={() => nav("track", t.id)} />
-        )} />
-      <CrateRow n="02" title="Album" items={data.albums} render={(a) => (
-          <EntityCard key={a.uri} image={pickImage(a.images)} title={a.name} subtitle={`${artistNames(a.artists)} · ${a.release_year || "—"}`} meta={a.type} onClick={() => nav("album", a.id)} />
-        )} />
-      <CrateRow n="03" title="Artis" items={data.artists} render={(a) => (
-          <EntityCard key={a.uri} image={pickImage(a.images)} title={a.name} round onClick={() => nav("artist", a.id)} />
-        )} />
-      <CrateRow n="04" title="Playlist" items={data.playlists} render={(p) => (
-          <EntityCard key={p.uri} image={pickImage(p.images)} title={p.name} subtitle={p.owner?.display_name ? `oleh ${p.owner.display_name}` : null} onClick={() => nav("playlist", p.id)} />
-        )} />
-      <CrateRow n="05" title="Episode" items={data.episodes} render={(e) => (
-          <EntityCard key={e.uri} image={pickImage(e.images)} title={e.name} subtitle={e.podcast?.name} meta={fmtDuration(e.duration_ms)} badge={e.explicit ? "E" : null} />
-        )} />
-      <CrateRow n="06" title="Podcast" items={data.podcasts} render={(p) => (
-          <EntityCard key={p.uri} image={pickImage(p.images)} title={p.name} subtitle={p.publisher} />
-        )} />
-      <CrateRow n="07" title="Genre" items={data.genres} render={(g) => (
-          <EntityCard key={g.uri} image={pickImage(g.images)} title={g.name} />
-        )} />
-      <CrateRow n="08" title="Pengguna" items={data.users} render={(u) => (
-          <EntityCard key={u.uri} image={pickImage(u.images)} title={u.display_name || u.username} round />
-        )} />
+      <CrateRow n="01" title="Lagu" items={data.tracks} render={(t) => <EntityCard key={t.uri} image={pickImage(t.album?.images)} title={t.name} subtitle={artistNames(t.artists)} meta={fmtDuration(t.duration_ms)} badge={t.explicit ? "E" : null} onClick={() => nav("track", t.id)} />} />
+      <CrateRow n="02" title="Album" items={data.albums} render={(a) => <EntityCard key={a.uri} image={pickImage(a.images)} title={a.name} subtitle={`${artistNames(a.artists)} · ${a.release_year || "—"}`} meta={a.type} onClick={() => nav("album", a.id)} />} />
+      <CrateRow n="03" title="Artis" items={data.artists} render={(a) => <EntityCard key={a.uri} image={pickImage(a.images)} title={a.name} round onClick={() => nav("artist", a.id)} />} />
+      <CrateRow n="04" title="Playlist" items={data.playlists} render={(p) => <EntityCard key={p.uri} image={pickImage(p.images)} title={p.name} subtitle={p.owner?.display_name ? `oleh ${p.owner.display_name}` : null} onClick={() => nav("playlist", p.id)} />} />
+      <CrateRow n="05" title="Episode" items={data.episodes} render={(e) => <EntityCard key={e.uri} image={pickImage(e.images)} title={e.name} subtitle={e.podcast?.name} meta={fmtDuration(e.duration_ms)} badge={e.explicit ? "E" : null} />} />
+      <CrateRow n="06" title="Podcast" items={data.podcasts} render={(p) => <EntityCard key={p.uri} image={pickImage(p.images)} title={p.name} subtitle={p.publisher} />} />
+      <CrateRow n="07" title="Genre" items={data.genres} render={(g) => <EntityCard key={g.uri} image={pickImage(g.images)} title={g.name} />} />
+      <CrateRow n="08" title="Pengguna" items={data.users} render={(u) => <EntityCard key={u.uri} image={pickImage(u.images)} title={u.display_name || u.username} round />} />
     </div>
   );
 }
@@ -379,35 +329,16 @@ function TrackDetailView({ id, nav }) {
             <span className="track-dur mono">{fmtDuration(t.duration_ms)}</span>
           </div>
           <div className="meta-grid">
-            <div>
-              <span className="meta-label">Album</span>
-              <button className="link" onClick={() => nav("album", t.album?.id)}>
-                {t.album?.name || "—"}
-              </button>
-            </div>
-            <div>
-              <span className="meta-label">Diputar</span>
-              <span className="mono">{fmtNumber(t.playcount)}×</span>
-            </div>
-            <div>
-              <span className="meta-label">Nomor trek</span>
-              <span className="mono">{t.track_number || "—"}</span>
-            </div>
+            <div><span className="meta-label">Album</span><button className="link" onClick={() => nav("album", t.album?.id)}>{t.album?.name || "—"}</button></div>
+            <div><span className="meta-label">Diputar</span><span className="mono">{fmtNumber(t.playcount)}×</span></div>
+            <div><span className="meta-label">Nomor trek</span><span className="mono">{t.track_number || "—"}</span></div>
           </div>
           <div className="artist-links">
-            {t.artists.map((a) => (
-              <button key={a.uri} className="pill" onClick={() => nav("artist", a.id)}>
-                {a.name}
-              </button>
-            ))}
+            {t.artists.map((a) => <button key={a.uri} className="pill" onClick={() => nav("artist", a.id)}>{a.name}</button>)}
           </div>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <button className="cta" onClick={() => play(t.id)}>
-              ▶️ Putar Lagu
-            </button>
-            <button className="cta" style={{ background: "var(--surface-2)" }} onClick={() => nav("card", t.id)}>
-              Bikin kartu bagikan ↗
-            </button>
+            <button className="cta" onClick={() => play(t.id)}>▶️ Putar Lagu</button>
+            <button className="cta" style={{ background: "var(--surface-2)" }} onClick={() => nav("card", t.id)}>Bikin kartu bagikan ↗</button>
           </div>
         </div>
       </div>
@@ -433,25 +364,12 @@ function AlbumDetailView({ id, nav }) {
           <h1>{a.name}</h1>
           <p className="sleeve-artists">{artistNames(a.artists)}</p>
           <div className="meta-grid">
-            <div>
-              <span className="meta-label">Rilis</span>
-              <span className="mono">{a.release_date || "—"}</span>
-            </div>
-            <div>
-              <span className="meta-label">Label</span>
-              <span>{a.label || "—"}</span>
-            </div>
-            <div>
-              <span className="meta-label">Trek</span>
-              <span className="mono">{a.tracks?.length || 0}</span>
-            </div>
+            <div><span className="meta-label">Rilis</span><span className="mono">{a.release_date || "—"}</span></div>
+            <div><span className="meta-label">Label</span><span>{a.label || "—"}</span></div>
+            <div><span className="meta-label">Trek</span><span className="mono">{a.tracks?.length || 0}</span></div>
           </div>
           <div className="artist-links">
-            {a.artists.map((ar) => (
-              <button key={ar.uri} className="pill" onClick={() => nav("artist", ar.id)}>
-                {ar.name}
-              </button>
-            ))}
+            {a.artists.map((ar) => <button key={ar.uri} className="pill" onClick={() => nav("artist", ar.id)}>{ar.name}</button>)}
           </div>
         </div>
       </div>
@@ -468,9 +386,7 @@ function AlbumDetailView({ id, nav }) {
         ))}
       </section>
 
-      {a.copyrights?.length > 0 && (
-        <p className="fine-print">{a.copyrights.map((c) => c.text).join(" · ")}</p>
-      )}
+      {a.copyrights?.length > 0 && <p className="fine-print">{a.copyrights.map((c) => c.text).join(" · ")}</p>}
     </div>
   );
 }
@@ -494,14 +410,8 @@ function ArtistDetailView({ id, nav }) {
             {a.verified && <Chip tone="accent">Terverifikasi</Chip>}
           </div>
           <div className="meta-grid">
-            <div>
-              <span className="meta-label">Pengikut</span>
-              <span className="mono">{fmtNumber(a.statistics?.followers)}</span>
-            </div>
-            <div>
-              <span className="meta-label">Pendengar bulanan</span>
-              <span className="mono">{fmtNumber(a.statistics?.monthly_listeners)}</span>
-            </div>
+            <div><span className="meta-label">Pengikut</span><span className="mono">{fmtNumber(a.statistics?.followers)}</span></div>
+            <div><span className="meta-label">Pendengar bulanan</span><span className="mono">{fmtNumber(a.statistics?.monthly_listeners)}</span></div>
           </div>
         </div>
       </div>
@@ -539,14 +449,8 @@ function PlaylistDetailView({ id, nav }) {
           <h1>{p.name}</h1>
           {p.description && <p className="sleeve-desc">{p.description.replace(/<[^>]+>/g, "")}</p>}
           <div className="meta-grid">
-            <div>
-              <span className="meta-label">Kurator</span>
-              <span>{p.owner?.display_name || "—"}</span>
-            </div>
-            <div>
-              <span className="meta-label">Trek</span>
-              <span className="mono">{p.tracks?.length || 0}</span>
-            </div>
+            <div><span className="meta-label">Kurator</span><span>{p.owner?.display_name || "—"}</span></div>
+            <div><span className="meta-label">Trek</span><span className="mono">{p.tracks?.length || 0}</span></div>
           </div>
         </div>
       </div>
@@ -557,10 +461,7 @@ function PlaylistDetailView({ id, nav }) {
           <button key={t.uri} className="track-line row-btn" onClick={() => nav("track", t.id)}>
             <span className="track-n mono">{(i + 1).toString().padStart(2, "0")}</span>
             {pickImage(t.album?.images) && <img className="row-thumb" src={pickImage(t.album?.images)} alt="" />}
-            <span className="track-title">
-              {t.name}
-              <span className="track-sub"> — {artistNames(t.artists)}</span>
-            </span>
+            <span className="track-title">{t.name}<span className="track-sub"> — {artistNames(t.artists)}</span></span>
             {t.explicit && <Chip>E</Chip>}
             <span className="track-dur mono">{fmtDuration(t.duration_ms)}</span>
           </button>
@@ -571,6 +472,7 @@ function PlaylistDetailView({ id, nav }) {
 }
 
 /* ====================== Card Maker ====================== */
+// ... (CardMakerView tidak berubah, hanya di sini untuk kelengkapan)
 function CardMakerView({ presetId, nav }) {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState(null);
@@ -589,22 +491,17 @@ function CardMakerView({ presetId, nav }) {
     img.onload = () => {
       try {
         const c = document.createElement("canvas");
-        c.width = 16;
-        c.height = 16;
+        c.width = 16; c.height = 16;
         const cx = c.getContext("2d");
         cx.drawImage(img, 0, 0, 16, 16);
         const d = cx.getImageData(0, 0, 16, 16).data;
         let r = 0, g = 0, b = 0, n = 0;
-        for (let i = 0; i < d.length; i += 4) {
-          r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
-        }
+        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
         r = Math.floor(r / n * 0.55);
         g = Math.floor(g / n * 0.55);
         b = Math.floor(b / n * 0.55);
         setBgColor(`rgb(${r},${g},${b})`);
-      } catch (e) {
-        setBgColor("#2A241E");
-      }
+      } catch (e) { setBgColor("#2A241E"); }
     };
     img.onerror = () => setBgColor("#2A241E");
     img.src = cover;
@@ -616,9 +513,7 @@ function CardMakerView({ presetId, nav }) {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     const W = 640, H = 840;
-    canvas.width = W;
-    canvas.height = H;
-
+    canvas.width = W; canvas.height = H;
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, W, H);
 
@@ -632,8 +527,7 @@ function CardMakerView({ presetId, nav }) {
       const cx = cardX + 40, cy = cardY + 40;
       if (coverImg) {
         roundRect(ctx, cx, cy, size, size, 12);
-        ctx.save();
-        ctx.clip();
+        ctx.save(); ctx.clip();
         ctx.drawImage(coverImg, cx, cy, size, size);
         ctx.restore();
       } else {
@@ -641,19 +535,15 @@ function CardMakerView({ presetId, nav }) {
         roundRect(ctx, cx, cy, size, size, 12);
         ctx.fill();
       }
-
       ctx.fillStyle = "#F3E9D8";
       ctx.font = "700 34px Georgia, serif";
-      wrapCanvasText(ctx, t.name, cx, cy + size + 56, size, 40).forEach(() => {});
-
+      wrapCanvasText(ctx, t.name, cx, cy + size + 56, size, 40);
       ctx.fillStyle = "rgba(243,233,216,0.72)";
       ctx.font = "500 22px sans-serif";
       ctx.fillText(artistNames(t.artists), cx, cy + size + 100);
-
       ctx.fillStyle = "rgba(243,233,216,0.5)";
       ctx.font = "600 16px monospace";
       ctx.fillText("PIRINGAN · " + fmtDuration(t.duration_ms), cx, cardY + cardH - 30);
-
       const link = document.createElement("a");
       link.download = `${t.name.replace(/[^a-z0-9]/gi, "_")}-piringan.png`;
       link.href = canvas.toDataURL("image/png");
@@ -661,10 +551,7 @@ function CardMakerView({ presetId, nav }) {
     };
 
     const cover = pickImage(t.album?.images, 400);
-    if (!cover) {
-      drawRest(null);
-      return;
-    }
+    if (!cover) { drawRest(null); return; }
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => drawRest(img);
@@ -679,42 +566,28 @@ function CardMakerView({ presetId, nav }) {
         <p className="hero-sub">Cari lagu, lalu unduh kartunya sebagai gambar.</p>
         <SearchBar value={input} onChange={setInput} onSubmit={(q) => q && setQuery(q)} />
       </div>
-
       {query && searchState.status === "loading" && <LoadingState />}
       {query && searchState.status === "success" && (
         <div className="crate-scroll">
           {(searchState.data.tracks || []).slice(0, 8).map((t) => (
-            <EntityCard
-              key={t.uri}
-              image={pickImage(t.album?.images)}
-              title={t.name}
-              subtitle={artistNames(t.artists)}
-              onClick={() => setPickedId(t.id)}
-            />
+            <EntityCard key={t.uri} image={pickImage(t.album?.images)} title={t.name} subtitle={artistNames(t.artists)} onClick={() => setPickedId(t.id)} />
           ))}
         </div>
       )}
-
       {pickedId && trackState.status === "loading" && <LoadingState label="Menyiapkan kartu…" />}
       {pickedId && trackState.status === "success" && (
         <div className="card-preview-wrap">
           <div className="card-preview" style={{ background: bgColor }}>
             <div className="card-preview-inner">
               <div className="card-preview-cover">
-                {pickImage(trackState.data.album?.images, 300) ? (
-                  <img src={pickImage(trackState.data.album?.images, 300)} alt="" />
-                ) : (
-                  <div className="e-cover-fallback">♪</div>
-                )}
+                {pickImage(trackState.data.album?.images, 300) ? <img src={pickImage(trackState.data.album?.images, 300)} alt="" /> : <div className="e-cover-fallback">♪</div>}
               </div>
               <div className="card-preview-title">{trackState.data.name}</div>
               <div className="card-preview-artist">{artistNames(trackState.data.artists)}</div>
               <div className="card-preview-brand">PIRINGAN · {fmtDuration(trackState.data.duration_ms)}</div>
             </div>
           </div>
-          <button className="cta" onClick={downloadCard}>
-            Unduh sebagai gambar ↓
-          </button>
+          <button className="cta" onClick={downloadCard}>Unduh sebagai gambar ↓</button>
           <canvas ref={canvasRef} style={{ display: "none" }} />
         </div>
       )}
@@ -753,45 +626,70 @@ function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
   return lines;
 }
 
-/* ====================== Mini Player ====================== */
+/* ====================== Mini Player (diperbarui) ====================== */
 function MiniPlayer() {
-  const { track, togglePlay, stop, audioRef } = usePlayer();
+  const { track, loading, togglePlay, stop, audioRef, setLoading } = usePlayer();
   const [playing, setPlaying] = useState(false);
+  const [ready, setReady] = useState(false); // ⬅️ apakah audio siap diputar
 
-  // Sinkronkan status playing dengan elemen audio
+  // Reset state saat track baru
   useEffect(() => {
+    if (!track) {
+      setReady(false);
+      setPlaying(false);
+      return;
+    }
+
     const audio = audioRef.current;
     if (!audio) return;
+
+    // Handler untuk berbagai event
+    const onCanPlay = () => {
+      setReady(true);
+      setLoading(false); // sembunyikan indikator loading
+      // Coba putar sekarang
+      audio.play().then(() => setPlaying(true)).catch(err => {
+        console.warn("Autoplay dicegah, pengguna harus menekan play lagi:", err);
+        setPlaying(false); // tombol akan tetap "Putar"
+      });
+    };
 
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onEnded = () => {
       setPlaying(false);
-      stop(); // reset track jika selesai
+      stop(); // reset track
+    };
+    const onError = (e) => {
+      console.error("Audio error:", e);
+      alert("Tidak dapat memutar lagu. Coba lagi nanti.");
+      setLoading(false);
+      setReady(false);
     };
 
+    // Pasang event
+    audio.addEventListener("canplay", onCanPlay);
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("ended", onEnded);
+    audio.addEventListener("error", onError);
+
+    // Set src dan load
+    audio.src = track.dl;
+    audio.load();
+    setReady(false);
+    setLoading(true); // tampilkan loading sampai canplay
 
     return () => {
+      audio.removeEventListener("canplay", onCanPlay);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
       audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("error", onError);
     };
-  }, [audioRef, stop]);
+  }, [track, audioRef, setLoading, stop]);
 
-  // Saat track baru di-set, set src dan putar
-  useEffect(() => {
-    if (!track || !audioRef.current) return;
-    const audio = audioRef.current;
-    audio.src = track.dl;
-    audio.play().catch(err => {
-      console.error("Gagal memutar audio:", err);
-      alert("Tidak dapat memutar lagu. Cek console untuk detail.");
-    });
-  }, [track, audioRef]);
-
+  // Jika tidak ada track, tidak tampil
   if (!track) return null;
 
   return (
@@ -804,12 +702,17 @@ function MiniPlayer() {
         </div>
       </div>
       <div className="mini-player-controls">
-        <button onClick={togglePlay}>
-          {playing ? "⏸️ Jeda" : "▶️ Putar"}
-        </button>
-        <button onClick={stop}>⏹️ Berhenti</button>
+        {loading ? (
+          <span className="mini-player-loading">Memuat…</span>
+        ) : (
+          <>
+            <button onClick={togglePlay} disabled={!ready}>
+              {playing ? "⏸️ Jeda" : "▶️ Putar"}
+            </button>
+            <button onClick={stop}>⏹️ Berhenti</button>
+          </>
+        )}
       </div>
-      {/* Elemen audio tersembunyi, dioper melalui ref */}
       <audio ref={audioRef} style={{ display: "none" }} />
     </div>
   );
@@ -834,12 +737,8 @@ function AppShell() {
           <span>PIRINGAN</span>
         </button>
         <nav className="topnav">
-          <button className={view.name === "home" ? "active" : ""} onClick={() => nav("home")}>
-            Beranda
-          </button>
-          <button className={view.name === "card" ? "active" : ""} onClick={() => nav("card")}>
-            Bikin Kartu
-          </button>
+          <button className={view.name === "home" ? "active" : ""} onClick={() => nav("home")}>Beranda</button>
+          <button className={view.name === "card" ? "active" : ""} onClick={() => nav("card")}>Bikin Kartu</button>
         </nav>
       </header>
 
@@ -893,14 +792,7 @@ function Styles() {
         --line: #332C25;
       }
       * { box-sizing: border-box; }
-      .app {
-        background: var(--bg);
-        color: var(--text);
-        min-height: 100vh;
-        font-family: 'Inter', sans-serif;
-        display: flex;
-        flex-direction: column;
-      }
+      .app { background: var(--bg); color: var(--text); min-height: 100vh; font-family: 'Inter', sans-serif; display: flex; flex-direction: column; }
       .mono { font-family: 'IBM Plex Mono', monospace; }
 
       .disc { animation: spin 3s linear infinite; }
@@ -911,15 +803,13 @@ function Styles() {
         position: sticky; top: 0; z-index: 10;
         display: flex; align-items: center; justify-content: space-between;
         padding: 16px 28px;
-        background: rgba(20,17,14,0.9);
-        backdrop-filter: blur(8px);
+        background: rgba(20,17,14,0.9); backdrop-filter: blur(8px);
         border-bottom: 1px solid var(--line);
       }
       .brand {
         display: flex; align-items: center; gap: 10px;
         background: none; border: none; cursor: pointer;
-        color: var(--text);
-        font-family: 'Fraunces', serif; font-weight: 700; font-size: 20px; letter-spacing: 0.02em;
+        color: var(--text); font-family: 'Fraunces', serif; font-weight: 700; font-size: 20px; letter-spacing: 0.02em;
       }
       .topnav { display: flex; gap: 4px; }
       .topnav button {
@@ -1032,9 +922,7 @@ function Styles() {
       }
       .cta:hover { filter: brightness(1.08); }
 
-      .track-line {
-        display: flex; align-items: center; gap: 14px; padding: 10px 4px; border-bottom: 1px solid var(--line);
-      }
+      .track-line { display: flex; align-items: center; gap: 14px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
       .row-btn { width: 100%; background: none; border: none; cursor: pointer; color: var(--text); font-family: 'Inter'; text-align: left; }
       .row-btn:hover { background: var(--surface); }
       .track-n { color: var(--text-muted); width: 28px; flex-shrink: 0; font-size: 13px; }
@@ -1071,29 +959,25 @@ function Styles() {
       /* MINI PLAYER */
       .mini-player {
         position: fixed; bottom: 0; left: 0; right: 0;
-        background: var(--surface);
-        border-top: 1px solid var(--line);
+        background: var(--surface); border-top: 1px solid var(--line);
         padding: 10px 24px;
         display: flex; align-items: center; justify-content: space-between;
-        backdrop-filter: blur(8px);
-        z-index: 20;
-        flex-wrap: wrap;
-        gap: 12px;
+        backdrop-filter: blur(8px); z-index: 20;
+        flex-wrap: wrap; gap: 12px;
       }
       .mini-player-info { display: flex; align-items: center; gap: 12px; min-width: 0; }
       .mini-player-info img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; }
       .mini-player-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
       .mini-player-artist { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-      .mini-player-controls { display: flex; gap: 8px; flex-shrink: 0; }
+      .mini-player-controls { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+      .mini-player-loading { font-size: 13px; color: var(--accent); font-style: italic; }
       .mini-player-controls button {
         background: var(--accent); color: #14110E; border: none;
         border-radius: 999px; padding: 8px 16px; cursor: pointer; font-weight: 600;
         font-size: 13px;
       }
-      .mini-player-controls button:last-child {
-        background: var(--surface-2);
-        color: var(--text);
-      }
+      .mini-player-controls button:last-child { background: var(--surface-2); color: var(--text); }
+      .mini-player-controls button:disabled { opacity: 0.5; cursor: default; }
 
       .footer { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12.5px; border-top: 1px solid var(--line); }
 
