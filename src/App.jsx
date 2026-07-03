@@ -306,7 +306,7 @@ function AddToPlaylistModal({ track, onClose }) {
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Tambah ke Playlist</h3>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}><i className="fa-solid fa-xmark"></i></button>
         </div>
         <p className="modal-track-name">{track.name || track.title}</p>
 
@@ -502,7 +502,7 @@ function CrateRow({ n, title, items, render }) {
 function SearchBar({ value, onChange, onSubmit, autoFocus }) {
   return (
     <form className="search-bar" onSubmit={(e) => { e.preventDefault(); onSubmit(value.trim()); }}>
-      <span className="search-icon">⌕</span>
+      <span className="search-icon"><i className="fa-solid fa-magnifying-glass"></i></span>
       <input autoFocus={autoFocus} placeholder="Cari lagu, album, artis, atau playlist…" value={value} onChange={(e) => onChange(e.target.value)} />
       <button type="submit">Cari</button>
     </form>
@@ -534,7 +534,7 @@ function HomeView({ nav }) {
         <VinylDisc size={84} />
         <h1>Buka sampul, <em>putar sesuatu</em>.</h1>
         <p className="hero-sub">Telusuri katalog Spotify — lagu, album, artis, dan playlist — disusun seperti krat piringan hitam.</p>
-        <button className="cta" onClick={() => nav("search")}>⌕ Mulai Cari</button>
+        <button className="cta" onClick={() => nav("search")}><i className="fa-solid fa-magnifying-glass"></i> Mulai Cari</button>
       </div>
       <div className="hint-row">
         <span>Coba:</span>
@@ -715,7 +715,7 @@ function TrackDetailView({ id, nav }) {
             {t.artists.map((a) => <button key={a.uri} className="pill" onClick={() => nav("artist", a.id)}>{a.name}</button>)}
           </div>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <button className="cta" onClick={() => play(t.id)}>▶️ Putar Lagu</button>
+            <button className="cta" onClick={() => play(t.id)}><i className="fa-solid fa-play"></i> Putar Lagu</button>
             <button className="cta" style={{ background: "var(--surface-2)" }} onClick={() => setShowAddModal(true)}>+ Tambah ke Playlist</button>
             <button className="cta" style={{ background: "var(--surface-2)" }} onClick={() => nav("card", t.id)}>Bikin kartu bagikan ↗</button>
           </div>
@@ -921,14 +921,14 @@ function MyPlaylistView({ id, nav }) {
           <p className="sleeve-artists">{playlist.tracks.length} lagu</p>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {playlist.tracks[0] && (
-              <button className="cta" onClick={() => playQueue(playlist.tracks.map((t) => t.id), 0)}>▶️ Putar Semua</button>
+              <button className="cta" onClick={() => playQueue(playlist.tracks.map((t) => t.id), 0)}><i className="fa-solid fa-play"></i> Putar Semua</button>
             )}
             <button
               className="cta"
               style={{ background: "var(--surface-2)" }}
               onClick={() => { deletePlaylist(playlist.id); nav("library"); }}
             >
-              🗑 Hapus Playlist
+              <i className="fa-solid fa-trash"></i> Hapus Playlist
             </button>
           </div>
         </div>
@@ -939,11 +939,11 @@ function MyPlaylistView({ id, nav }) {
         {playlist.tracks.length === 0 && <EmptyState message="Belum ada lagu di playlist ini." />}
         {playlist.tracks.map((t, i) => (
           <div key={t.id} className="track-line">
-            <button className="result-row-add" title="Putar dari sini" onClick={() => playQueue(playlist.tracks.map((tr) => tr.id), i)}>▶</button>
+            <button className="result-row-add" title="Putar dari sini" onClick={() => playQueue(playlist.tracks.map((tr) => tr.id), i)}><i className="fa-solid fa-play"></i></button>
             {pickImage(t.album?.images) && <img className="row-thumb" src={pickImage(t.album?.images)} alt="" />}
             <button className="track-title link" style={{ textAlign: "left" }} onClick={() => nav("track", t.id)}>{t.name}<span className="track-sub"> — {artistNames(t.artists)}</span></button>
             <span className="track-dur mono">{fmtDuration(t.duration_ms)}</span>
-            <button className="result-row-add" title="Hapus dari playlist" onClick={() => removeTrackFromPlaylist(playlist.id, t.id)}>✕</button>
+            <button className="result-row-add" title="Hapus dari playlist" onClick={() => removeTrackFromPlaylist(playlist.id, t.id)}><i className="fa-solid fa-xmark"></i></button>
           </div>
         ))}
       </section>
@@ -1153,9 +1153,9 @@ function MiniPlayer() {
         ) : (
           <>
             <button onClick={togglePlay} disabled={!ready}>
-              {playing ? "⏸️" : "▶️"}
+              <i className={`fa-solid ${playing ? "fa-pause" : "fa-play"}`}></i>
             </button>
-            <button className="mini-player-close" onClick={stop}>✕</button>
+            <button className="mini-player-close" onClick={stop}><i className="fa-solid fa-xmark"></i></button>
           </>
         )}
       </div>
@@ -1175,7 +1175,7 @@ function NowPlayingSheet() {
   return (
     <div className="now-playing">
       <div className="now-playing-head">
-        <button className="now-playing-collapse" onClick={() => setSheetOpen(false)}>⌄</button>
+        <button className="now-playing-collapse" onClick={() => setSheetOpen(false)}><i className="fa-solid fa-chevron-down"></i></button>
         <div className="now-playing-eyebrow">
           <span>SEDANG DIPUTAR</span>
           <strong>{track.artist}</strong>
@@ -1210,13 +1210,13 @@ function NowPlayingSheet() {
       </div>
 
       <div className="now-playing-controls">
-        <button className="now-playing-skip" onClick={previous} disabled={!hasPrevious}>⏮</button>
+        <button className="now-playing-skip" onClick={previous} disabled={!hasPrevious}><i className="fa-solid fa-backward-step"></i></button>
         <button className="now-playing-play" onClick={togglePlay} disabled={!ready}>
-          {loading ? "…" : playing ? "⏸️" : "▶️"}
+          {loading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className={`fa-solid ${playing ? "fa-pause" : "fa-play"}`}></i>}
         </button>
-        <button className="now-playing-skip" onClick={next} disabled={!hasNext}>⏭</button>
+        <button className="now-playing-skip" onClick={next} disabled={!hasNext}><i className="fa-solid fa-forward-step"></i></button>
       </div>
-      <button className="now-playing-stop" onClick={stop} style={{ marginTop: 14 }}>⏹️ Berhenti</button>
+      <button className="now-playing-stop" onClick={stop} style={{ marginTop: 14 }}><i className="fa-solid fa-stop"></i> Berhenti</button>
 
       {showAddModal && <AddToPlaylistModal track={track} onClose={() => setShowAddModal(false)} />}
     </div>
@@ -1225,11 +1225,11 @@ function NowPlayingSheet() {
 
 /* ====================== Navigasi Bawah ====================== */
 const NAV_ITEMS = [
-  { key: "home", label: "Home", icon: "⌂" },
-  { key: "search", label: "Search", icon: "⌕" },
-  { key: "card", label: "Card", icon: "🎴" },
-  { key: "library", label: "Library", icon: "▤" },
-  { key: "info", label: "Info", icon: "ⓘ" },
+  { key: "home", label: "Home", icon: "fa-house" },
+  { key: "search", label: "Search", icon: "fa-magnifying-glass" },
+  { key: "card", label: "Card", icon: "fa-id-card" },
+  { key: "library", label: "Library", icon: "fa-bars-staggered" },
+  { key: "info", label: "Info", icon: "fa-circle-info" },
 ];
 
 function BottomNav({ current, nav }) {
@@ -1241,7 +1241,7 @@ function BottomNav({ current, nav }) {
           className={`bottom-nav-btn ${current === item.key ? "active" : ""}`}
           onClick={() => nav(item.key)}
         >
-          <span className="bottom-nav-icon">{item.icon}</span>
+          <span className="bottom-nav-icon"><i className={`fa-solid ${item.icon}`}></i></span>
           <span className="bottom-nav-label">{item.label}</span>
         </button>
       ))}
@@ -1321,9 +1321,15 @@ export default function App() {
 /* ====================== Fonts & Styles ====================== */
 function Fonts() {
   return (
-    <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-    `}</style>
+    <>
+      <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+      />
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+      `}</style>
+    </>
   );
 }
 
