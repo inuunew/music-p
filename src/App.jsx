@@ -99,6 +99,68 @@ function PlayerProvider({ children }) {
   const hasNext = queueIndex >= 0 && queueIndex < queue.length - 1;
   const hasPrevious = queueIndex > 0;
 
+  // ====== Media Session API: kontrol di lock screen / notifikasi ======
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !track) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: track.title,
+      artist: track.artist,
+      album: track.album || "Piringan",
+      artwork: track.cover
+        ? [64, 96, 128, 192, 256, 384, 512].map((size) => ({
+            src: track.cover,
+            sizes: `${size}x${size}`,
+            type: "image/jpeg",
+          }))
+        : [],
+    });
+
+    navigator.mediaSession.setActionHandler("play", () => {
+      audioRef.current?.play().catch(() => {});
+    });
+    navigator.mediaSession.setActionHandler("pause", () => {
+      audioRef.current?.pause();
+    });
+    navigator.mediaSession.setActionHandler("stop", () => stop());
+    navigator.mediaSession.setActionHandler("previoustrack", hasPrevious ? () => previous() : null);
+    navigator.mediaSession.setActionHandler("nexttrack", hasNext ? () => next() : null);
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      if (audioRef.current && typeof details.seekTime === "number") {
+        audioRef.current.currentTime = details.seekTime;
+        setCurrentTime(details.seekTime);
+      }
+    });
+
+    return () => {
+      // Bersihkan handler saat lagu berganti/berhenti agar tidak nyangkut ke lagu lama
+      ["play", "pause", "stop", "previoustrack", "nexttrack", "seekto"].forEach((action) => {
+        try {
+          navigator.mediaSession.setActionHandler(action, null);
+        } catch (e) {}
+      });
+    };
+  }, [track?.id, hasNext, hasPrevious, next, previous, stop]);
+
+  // Sinkronkan status play/pause ke lock screen
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+  }, [playing]);
+
+  // Sinkronkan posisi/progress ke lock screen (kalau didukung)
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
+    if (!ready || !duration) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration,
+        playbackRate: 1,
+        position: Math.min(currentTime, duration),
+      });
+    } catch (e) {}
+  }, [currentTime, duration, ready]);
+
   const togglePlay = useCallback(() => {
     if (!audioRef.current) return;
     if (audioRef.current.paused) {
@@ -265,6 +327,62 @@ function PlaylistProvider({ children }) {
 
 function usePlaylists() {
   return useContext(PlaylistContext);
+}
+
+/* ====================== Install Prompt Context (Add to Home Screen) ====================== */
+const InstallContext = createContext(null);
+
+function InstallProvider({ children }) {
+  const [installEvent, setInstallEvent] = useState(null);
+  const [installed, setInstalled] = useState(false);
+  const [platform, setPlatform] = useState("unknown"); // "android" | "ios" | "desktop" | "unknown"
+
+  useEffect(() => {
+    const ua = navigator.userAgent || "";
+    const isIos = /iphone|ipad|ipod/i.test(ua);
+    const isStandalone =
+      window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
+
+    setPlatform(isIos ? "ios" : /android/i.test(ua) ? "android" : "desktop");
+    if (isStandalone) setInstalled(true);
+
+    const onBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setInstallEvent(e);
+    };
+    const onAppInstalled = () => {
+      setInstalled(true);
+      setInstallEvent(null);
+    };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
+
+  const promptInstall = useCallback(async () => {
+    if (!installEvent) return false;
+    installEvent.prompt();
+    const choice = await installEvent.userChoice;
+    setInstallEvent(null);
+    if (choice.outcome === "accepted") setInstalled(true);
+    return choice.outcome === "accepted";
+  }, [installEvent]);
+
+  return (
+    <InstallContext.Provider
+      value={{ canInstall: !!installEvent, installed, platform, promptInstall }}
+    >
+      {children}
+    </InstallContext.Provider>
+  );
+}
+
+function useInstallPrompt() {
+  return useContext(InstallContext);
 }
 
 // Ubah objek trek (dari katalog ATAU dari player yang sedang berjalan) menjadi bentuk
@@ -953,6 +1071,8 @@ function MyPlaylistView({ id, nav }) {
 
 /* ====================== Info ====================== */
 function InfoView() {
+  const { canInstall, installed, platform, promptInstall } = useInstallPrompt();
+
   return (
     <div className="view">
       <h1 className="page-title">Info</h1>
@@ -965,6 +1085,34 @@ function InfoView() {
           </p>
         </div>
       </div>
+
+      <section className="install-section">
+        {installed ? (
+          <div className="install-status">
+            <i className="fa-solid fa-circle-check"></i>
+            <span>Piringan sudah terpasang di perangkat kamu.</span>
+          </div>
+        ) : canInstall ? (
+          <button className="cta install-btn" onClick={promptInstall}>
+            <i className="fa-solid fa-arrow-down-to-line"></i> Pasang ke Layar Utama
+          </button>
+        ) : platform === "ios" ? (
+          <div className="install-hint">
+            <p className="install-hint-title"><i className="fa-solid fa-mobile-screen-button"></i> Pasang di iPhone/iPad</p>
+            <p className="install-hint-text">
+              Ketuk tombol <strong>Bagikan</strong> <i className="fa-solid fa-arrow-up-from-bracket"></i> di Safari, lalu pilih <strong>"Tambah ke Layar Utama"</strong>.
+            </p>
+          </div>
+        ) : (
+          <div className="install-hint">
+            <p className="install-hint-title"><i className="fa-solid fa-desktop"></i> Pasang Piringan</p>
+            <p className="install-hint-text">
+              Buka menu browser (⋮) lalu pilih <strong>"Instal aplikasi"</strong> atau <strong>"Tambahkan ke layar utama"</strong>.
+            </p>
+          </div>
+        )}
+      </section>
+
       <ul className="info-list">
         <li>Gunakan tab <strong>Search</strong> untuk menelusuri katalog.</li>
         <li>Tekan tombol <strong>+</strong> pada sebuah lagu untuk menambahkannya ke playlist.</li>
@@ -1260,6 +1408,12 @@ function AppShell() {
   const [view, setView] = useState({ name: "home" });
   const [history, setHistory] = useState([]);
 
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch((err) => console.warn("SW gagal daftar:", err));
+    }
+  }, []);
+
   const nav = (name, id) => {
     if (!id && !["home", "card", "search", "library", "info"].includes(name)) return;
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1310,11 +1464,13 @@ function AppShell() {
 
 export default function App() {
   return (
-    <PlayerProvider>
-      <PlaylistProvider>
-        <AppShell />
-      </PlaylistProvider>
-    </PlayerProvider>
+    <InstallProvider>
+      <PlayerProvider>
+        <PlaylistProvider>
+          <AppShell />
+        </PlaylistProvider>
+      </PlayerProvider>
+    </InstallProvider>
   );
 }
 
@@ -1322,6 +1478,7 @@ export default function App() {
 function Fonts() {
   return (
     <>
+      <link rel="manifest" href="/manifest.json" />
       <link
         rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
@@ -1708,6 +1865,19 @@ function Styles() {
       .info-heading { font-family: 'Fraunces', serif; font-size: 22px; margin: 0; letter-spacing: 0.02em; }
       .info-list { color: var(--text-muted); font-size: 14.5px; line-height: 2; padding-left: 20px; margin: 0 0 24px; }
       .info-list strong { color: var(--text); }
+
+      .install-section { margin-bottom: 28px; }
+      .install-btn { display: inline-flex; align-items: center; gap: 10px; }
+      .install-status {
+        display: flex; align-items: center; gap: 10px; color: var(--accent-2);
+        background: rgba(79,140,122,0.12); border: 1px solid rgba(79,140,122,0.35);
+        border-radius: 12px; padding: 12px 16px; font-size: 14px;
+      }
+      .install-hint {
+        background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+      }
+      .install-hint-title { display: flex; align-items: center; gap: 8px; font-weight: 700; margin: 0 0 6px; }
+      .install-hint-text { color: var(--text-muted); font-size: 13.5px; margin: 0; line-height: 1.6; }
 
       @media (max-width: 640px) {
         main { padding: 20px 16px calc(84px + env(safe-area-inset-bottom, 0px)); }
