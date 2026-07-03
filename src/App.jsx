@@ -130,32 +130,48 @@ function PlayerProvider({ children }) {
   }, []);
 
   // ====== Media Session API: kontrol di lock screen / notifikasi ======
+  // Dibungkus try/catch di semua sisi — kalau browser tidak mendukung penuh
+  // (mis. action tertentu tidak dikenal), fitur ini gagal diam-diam dan
+  // TIDAK BOLEH ikut mematahkan pemutaran lagu.
   useEffect(() => {
-    if (!("mediaSession" in navigator) || !track) return;
+    if (!track) return;
+    if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
 
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: track.title,
-      artist: track.artist,
-      album: track.album || "Piringan",
-      artwork: track.cover
-        ? [64, 96, 128, 192, 256, 384, 512].map((size) => ({
-            src: track.cover,
-            sizes: `${size}x${size}`,
-            type: "image/jpeg",
-          }))
-        : [],
-    });
+    const setHandler = (action, handler) => {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch (e) {
+        // Action ini tidak didukung browser — abaikan saja.
+      }
+    };
 
-    navigator.mediaSession.setActionHandler("play", () => {
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title,
+        artist: track.artist,
+        album: track.album || "Piringan",
+        artwork: track.cover
+          ? [64, 96, 128, 192, 256, 384, 512].map((size) => ({
+              src: track.cover,
+              sizes: `${size}x${size}`,
+              type: "image/jpeg",
+            }))
+          : [],
+      });
+    } catch (e) {
+      console.warn("Media Session metadata gagal diset:", e);
+    }
+
+    setHandler("play", () => {
       audioRef.current?.play().catch(() => {});
     });
-    navigator.mediaSession.setActionHandler("pause", () => {
+    setHandler("pause", () => {
       audioRef.current?.pause();
     });
-    navigator.mediaSession.setActionHandler("stop", () => stop());
-    navigator.mediaSession.setActionHandler("previoustrack", hasPrevious ? () => previous() : null);
-    navigator.mediaSession.setActionHandler("nexttrack", hasNext ? () => next() : null);
-    navigator.mediaSession.setActionHandler("seekto", (details) => {
+    setHandler("stop", () => stop());
+    setHandler("previoustrack", hasPrevious ? () => previous() : null);
+    setHandler("nexttrack", hasNext ? () => next() : null);
+    setHandler("seekto", (details) => {
       if (audioRef.current && typeof details.seekTime === "number") {
         audioRef.current.currentTime = details.seekTime;
         setCurrentTime(details.seekTime);
@@ -174,8 +190,10 @@ function PlayerProvider({ children }) {
 
   // Sinkronkan status play/pause ke lock screen
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
-    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    try {
+      if (!("mediaSession" in navigator)) return;
+      navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    } catch (e) {}
   }, [playing]);
 
   // Sinkronkan posisi/progress ke lock screen (kalau didukung)
