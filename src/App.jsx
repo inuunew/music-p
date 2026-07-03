@@ -3,20 +3,15 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 const API = "/api/spotify";
 
 /* ====================== Player Context ====================== */
-
 const PlayerContext = createContext(null);
 
 function PlayerProvider({ children }) {
   const [track, setTrack] = useState(null); // { id, title, artist, cover, dl }
-  const [playing, setPlaying] = useState(false);
-  const audioRef = useRef(new Audio());
+  const audioRef = useRef(null); // akan diisi oleh elemen <audio> di MiniPlayer
 
-  // fungsi untuk mengambil link download & memutar
   const play = useCallback(async (trackId) => {
-    // 1. Ambil metadata dari API internal kamu
-    const metaRes = await fetch(
-      `${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`
-    );
+    // 1. Ambil metadata dari API internal
+    const metaRes = await fetch(`${API}?endpoint=spotify-track&q=${encodeURIComponent(trackId)}`);
     const metaJson = await metaRes.json();
     if (!metaJson?.status || !metaJson.result) {
       alert("Gagal memuat metadata lagu.");
@@ -26,10 +21,12 @@ function PlayerProvider({ children }) {
 
     // 2. Ambil link download dari API Spotify Download
     const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
-    const dlRes = await fetch(
-      `https://api.inuutyz.web.id/api/download/spotify-dl?url=${encodeURIComponent(spotifyUrl)}`
-    );
+    // ✅ lewat server‑side proxy
+const dlRes = await fetch(
+  `/api/spotify?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`
+);
     const dlJson = await dlRes.json();
+    console.log("Response download:", dlJson);
     if (!dlJson?.status || !dlJson.result?.dl) {
       alert("Gagal mendapatkan link audio.");
       return;
@@ -37,46 +34,34 @@ function PlayerProvider({ children }) {
 
     const audioUrl = dlJson.result.dl;
 
-    // 3. Simpan data lagu & putar
-    const newTrack = {
+    // Simpan data lagu (audio akan dimulai oleh useEffect di MiniPlayer)
+    setTrack({
       id: t.id,
       title: t.name,
       artist: t.artists?.map((a) => a.name).join(", ") || "Tidak diketahui",
       cover: t.album?.images?.[0]?.url || null,
       dl: audioUrl,
-    };
-    setTrack(newTrack);
-    audioRef.current.src = audioUrl;
-    audioRef.current.play();
-    setPlaying(true);
+    });
   }, []);
 
   const togglePlay = useCallback(() => {
-    if (!track) return;
-    if (playing) {
-      audioRef.current.pause();
+    if (!audioRef.current) return;
+    if (audioRef.current.paused) {
+      audioRef.current.play().catch(err => console.error(err));
     } else {
-      audioRef.current.play();
+      audioRef.current.pause();
     }
-    setPlaying(!playing);
-  }, [track, playing]);
-
-  const stop = useCallback(() => {
-    audioRef.current.pause();
-    audioRef.current.src = "";
-    setTrack(null);
-    setPlaying(false);
   }, []);
 
-  // event listener
-  audioRef.current.onended = () => setPlaying(false);
-  audioRef.current.onerror = () => {
-    alert("Gagal memutar audio.");
-    stop();
-  };
+  const stop = useCallback(() => {
+    if (!audioRef.current) return;
+    audioRef.current.pause();
+    audioRef.current.currentTime = 0;
+    setTrack(null);
+  }, []);
 
   return (
-    <PlayerContext.Provider value={{ track, playing, play, togglePlay, stop }}>
+    <PlayerContext.Provider value={{ track, play, togglePlay, stop, audioRef }}>
       {children}
     </PlayerContext.Provider>
   );
@@ -87,7 +72,6 @@ function usePlayer() {
 }
 
 /* ====================== helpers ====================== */
-
 function fmtDuration(ms) {
   if (!ms && ms !== 0) return "--:--";
   const s = Math.floor(ms / 1000);
@@ -154,7 +138,6 @@ function useApiFetch(endpoint, query) {
 }
 
 /* ====================== Vinyl Disc & Atoms ====================== */
-
 function VinylDisc({ size = 40, spinning = false, cover = null }) {
   return (
     <div
@@ -224,7 +207,6 @@ function EmptyState({ message }) {
 }
 
 /* ====================== Cards & Crate ====================== */
-
 function EntityCard({ image, title, subtitle, meta, round, badge, onClick }) {
   return (
     <button className="e-card" onClick={onClick} disabled={!onClick}>
@@ -250,7 +232,6 @@ function CrateRow({ n, title, items, render }) {
 }
 
 /* ====================== Search ====================== */
-
 function SearchBar({ value, onChange, onSubmit, autoFocus }) {
   return (
     <form
@@ -273,7 +254,6 @@ function SearchBar({ value, onChange, onSubmit, autoFocus }) {
 }
 
 /* ====================== Views ====================== */
-
 function HomeView({ nav }) {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState(null);
@@ -332,11 +312,8 @@ function ResultsCrates({ data, query, nav }) {
 
   return (
     <div className="crates">
-      <CrateRow
-        n="00"
-        title="Hasil Teratas"
-        items={data.top_results}
-        render={(item, i) => {
+      {/* ... (CrateRow untuk setiap kategori, tidak ada perubahan) ... */}
+      <CrateRow n="00" title="Hasil Teratas" items={data.top_results} render={(item, i) => {
           const clickable = ["Track", "Album", "Artist", "Playlist"].includes(item.type);
           return (
             <EntityCard
@@ -348,110 +325,37 @@ function ResultsCrates({ data, query, nav }) {
               onClick={clickable ? () => nav(item.type.toLowerCase(), item.id) : undefined}
             />
           );
-        }}
-      />
-      <CrateRow
-        n="01"
-        title="Lagu"
-        items={data.tracks}
-        render={(t) => (
-          <EntityCard
-            key={t.uri}
-            image={pickImage(t.album?.images)}
-            title={t.name}
-            subtitle={artistNames(t.artists)}
-            meta={fmtDuration(t.duration_ms)}
-            badge={t.explicit ? "E" : null}
-            onClick={() => nav("track", t.id)}
-          />
-        )}
-      />
-      <CrateRow
-        n="02"
-        title="Album"
-        items={data.albums}
-        render={(a) => (
-          <EntityCard
-            key={a.uri}
-            image={pickImage(a.images)}
-            title={a.name}
-            subtitle={`${artistNames(a.artists)} · ${a.release_year || "—"}`}
-            meta={a.type}
-            onClick={() => nav("album", a.id)}
-          />
-        )}
-      />
-      <CrateRow
-        n="03"
-        title="Artis"
-        items={data.artists}
-        render={(a) => (
-          <EntityCard
-            key={a.uri}
-            image={pickImage(a.images)}
-            title={a.name}
-            round
-            onClick={() => nav("artist", a.id)}
-          />
-        )}
-      />
-      <CrateRow
-        n="04"
-        title="Playlist"
-        items={data.playlists}
-        render={(p) => (
-          <EntityCard
-            key={p.uri}
-            image={pickImage(p.images)}
-            title={p.name}
-            subtitle={p.owner?.display_name ? `oleh ${p.owner.display_name}` : null}
-            onClick={() => nav("playlist", p.id)}
-          />
-        )}
-      />
-      <CrateRow
-        n="05"
-        title="Episode"
-        items={data.episodes}
-        render={(e) => (
-          <EntityCard
-            key={e.uri}
-            image={pickImage(e.images)}
-            title={e.name}
-            subtitle={e.podcast?.name}
-            meta={fmtDuration(e.duration_ms)}
-            badge={e.explicit ? "E" : null}
-          />
-        )}
-      />
-      <CrateRow
-        n="06"
-        title="Podcast"
-        items={data.podcasts}
-        render={(p) => (
+        }} />
+      <CrateRow n="01" title="Lagu" items={data.tracks} render={(t) => (
+          <EntityCard key={t.uri} image={pickImage(t.album?.images)} title={t.name} subtitle={artistNames(t.artists)} meta={fmtDuration(t.duration_ms)} badge={t.explicit ? "E" : null} onClick={() => nav("track", t.id)} />
+        )} />
+      <CrateRow n="02" title="Album" items={data.albums} render={(a) => (
+          <EntityCard key={a.uri} image={pickImage(a.images)} title={a.name} subtitle={`${artistNames(a.artists)} · ${a.release_year || "—"}`} meta={a.type} onClick={() => nav("album", a.id)} />
+        )} />
+      <CrateRow n="03" title="Artis" items={data.artists} render={(a) => (
+          <EntityCard key={a.uri} image={pickImage(a.images)} title={a.name} round onClick={() => nav("artist", a.id)} />
+        )} />
+      <CrateRow n="04" title="Playlist" items={data.playlists} render={(p) => (
+          <EntityCard key={p.uri} image={pickImage(p.images)} title={p.name} subtitle={p.owner?.display_name ? `oleh ${p.owner.display_name}` : null} onClick={() => nav("playlist", p.id)} />
+        )} />
+      <CrateRow n="05" title="Episode" items={data.episodes} render={(e) => (
+          <EntityCard key={e.uri} image={pickImage(e.images)} title={e.name} subtitle={e.podcast?.name} meta={fmtDuration(e.duration_ms)} badge={e.explicit ? "E" : null} />
+        )} />
+      <CrateRow n="06" title="Podcast" items={data.podcasts} render={(p) => (
           <EntityCard key={p.uri} image={pickImage(p.images)} title={p.name} subtitle={p.publisher} />
-        )}
-      />
-      <CrateRow
-        n="07"
-        title="Genre"
-        items={data.genres}
-        render={(g) => <EntityCard key={g.uri} image={pickImage(g.images)} title={g.name} />}
-      />
-      <CrateRow
-        n="08"
-        title="Pengguna"
-        items={data.users}
-        render={(u) => (
+        )} />
+      <CrateRow n="07" title="Genre" items={data.genres} render={(g) => (
+          <EntityCard key={g.uri} image={pickImage(g.images)} title={g.name} />
+        )} />
+      <CrateRow n="08" title="Pengguna" items={data.users} render={(u) => (
           <EntityCard key={u.uri} image={pickImage(u.images)} title={u.display_name || u.username} round />
-        )}
-      />
+        )} />
     </div>
   );
 }
 
 function TrackDetailView({ id, nav }) {
-  const { play } = usePlayer(); // <-- gunakan player
+  const { play } = usePlayer();
   const state = useApiFetch("spotify-track", id);
   if (state.status === "loading" || state.status === "idle") return <LoadingState />;
   if (state.status === "error") return <ErrorState message={state.error} />;
@@ -667,7 +571,6 @@ function PlaylistDetailView({ id, nav }) {
 }
 
 /* ====================== Card Maker ====================== */
-
 function CardMakerView({ presetId, nav }) {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState(null);
@@ -851,9 +754,44 @@ function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
 }
 
 /* ====================== Mini Player ====================== */
-
 function MiniPlayer() {
-  const { track, playing, togglePlay, stop } = usePlayer();
+  const { track, togglePlay, stop, audioRef } = usePlayer();
+  const [playing, setPlaying] = useState(false);
+
+  // Sinkronkan status playing dengan elemen audio
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    const onEnded = () => {
+      setPlaying(false);
+      stop(); // reset track jika selesai
+    };
+
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("ended", onEnded);
+
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("ended", onEnded);
+    };
+  }, [audioRef, stop]);
+
+  // Saat track baru di-set, set src dan putar
+  useEffect(() => {
+    if (!track || !audioRef.current) return;
+    const audio = audioRef.current;
+    audio.src = track.dl;
+    audio.play().catch(err => {
+      console.error("Gagal memutar audio:", err);
+      alert("Tidak dapat memutar lagu. Cek console untuk detail.");
+    });
+  }, [track, audioRef]);
+
   if (!track) return null;
 
   return (
@@ -871,12 +809,13 @@ function MiniPlayer() {
         </button>
         <button onClick={stop}>⏹️ Berhenti</button>
       </div>
+      {/* Elemen audio tersembunyi, dioper melalui ref */}
+      <audio ref={audioRef} style={{ display: "none" }} />
     </div>
   );
 }
 
 /* ====================== App Shell ====================== */
-
 function AppShell() {
   const [view, setView] = useState({ name: "home" });
 
@@ -932,7 +871,6 @@ export default function App() {
 }
 
 /* ====================== Fonts & Styles ====================== */
-
 function Fonts() {
   return (
     <style>{`
@@ -1130,7 +1068,7 @@ function Styles() {
       .card-preview-artist { color: rgba(243,233,216,0.75); font-size: 14px; }
       .card-preview-brand { margin-top: auto; font-family: 'IBM Plex Mono'; font-size: 12px; color: rgba(243,233,216,0.5); }
 
-      /* ===== MINI PLAYER ===== */
+      /* MINI PLAYER */
       .mini-player {
         position: fixed; bottom: 0; left: 0; right: 0;
         background: var(--surface);
