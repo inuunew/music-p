@@ -99,6 +99,36 @@ function PlayerProvider({ children }) {
   const hasNext = queueIndex >= 0 && queueIndex < queue.length - 1;
   const hasPrevious = queueIndex > 0;
 
+  const togglePlay = useCallback(() => {
+    if (!audioRef.current) return;
+    if (audioRef.current.paused) {
+      audioRef.current.play().catch(err => console.error(err));
+    } else {
+      audioRef.current.pause();
+    }
+  }, []);
+
+  const seek = useCallback((time) => {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = time;
+    setCurrentTime(time);
+  }, []);
+
+  const stop = useCallback(() => {
+    if (!audioRef.current) return;
+    audioRef.current.pause();
+    audioRef.current.currentTime = 0;
+    setTrack(null);
+    setLoading(false);
+    setPlaying(false);
+    setReady(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setSheetOpen(false);
+    setQueue([]);
+    setQueueIndex(-1);
+  }, []);
+
   // ====== Media Session API: kontrol di lock screen / notifikasi ======
   useEffect(() => {
     if (!("mediaSession" in navigator) || !track) return;
@@ -160,36 +190,6 @@ function PlayerProvider({ children }) {
       });
     } catch (e) {}
   }, [currentTime, duration, ready]);
-
-  const togglePlay = useCallback(() => {
-    if (!audioRef.current) return;
-    if (audioRef.current.paused) {
-      audioRef.current.play().catch(err => console.error(err));
-    } else {
-      audioRef.current.pause();
-    }
-  }, []);
-
-  const seek = useCallback((time) => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = time;
-    setCurrentTime(time);
-  }, []);
-
-  const stop = useCallback(() => {
-    if (!audioRef.current) return;
-    audioRef.current.pause();
-    audioRef.current.currentTime = 0;
-    setTrack(null);
-    setLoading(false);
-    setPlaying(false);
-    setReady(false);
-    setCurrentTime(0);
-    setDuration(0);
-    setSheetOpen(false);
-    setQueue([]);
-    setQueueIndex(-1);
-  }, []);
 
   // Pasang ulang listener setiap kali sumber lagu berganti
   useEffect(() => {
