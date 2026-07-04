@@ -8,7 +8,7 @@ const API = "/api/spotify";
 // onAttempt(attempt, maxAttempts) dipanggil di awal tiap percobaan, dipakai untuk tampilkan progres ke UI.
 async function fetchDownloadLink(spotifyUrl, onAttempt = null) {
   const maxAttempts = 3;
-  const perAttemptTimeout = 8000; // batas waktu tiap percobaan, jaga-jaga kalau API hang total
+  const perAttemptTimeout = 1200; // batas waktu tiap percobaan, jaga-jaga kalau API hang total
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
