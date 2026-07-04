@@ -2,6 +2,30 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 
 const API = "/api/spotify";
 
+// Ambil link download, dengan retry otomatis kalau backend belum siap / gagal.
+// Dipisah jadi fungsi sendiri (sama seperti pola di music.html) supaya loadTrack tetap ringkas.
+async function fetchDownloadLink(spotifyUrl) {
+  const maxAttempts = 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`);
+      const json = await res.json();
+      if (json?.status && json.result?.dl) {
+        return json.result.dl;
+      }
+      lastError = new Error("Link download tidak tersedia");
+    } catch (e) {
+      lastError = e;
+      console.warn(`Percobaan ${attempt} gagal:`, e.message);
+    }
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, attempt * 1000)); // 1s, lalu 2s
+    }
+  }
+  throw lastError || new Error("Gagal mendapatkan link download");
+}
 /* ====================== Player Context (diperbarui) ====================== */
 const PlayerContext = createContext(null);
 
@@ -39,30 +63,9 @@ function PlayerProvider({ children }) {
         t = metaJson.result;
       }
 
-      // Baru ambil link download SETELAH metadata selesai — dengan retry otomatis
+      // Baru ambil link download SETELAH metadata selesai — download dulu, baru diputar
       const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
-      let dlJson = null;
-      let attempts = 0;
-      const maxAttempts = 3;
-
-      while (attempts < maxAttempts) {
-        attempts++;
-        try {
-          dlJson = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
-          if (dlJson?.status && dlJson.result?.dl) break; // sukses, keluar loop
-        } catch (e) {
-          console.warn(`Percobaan ${attempts} gagal:`, e.message);
-        }
-        if (attempts < maxAttempts) {
-          await new Promise((res) => setTimeout(res, 1000)); // jeda sebelum coba lagi, kasih waktu backend proses
-        }
-      }
-
-      if (!dlJson?.status || !dlJson.result?.dl) {
-        alert("Gagal mendapatkan link audio setelah beberapa percobaan. Coba lagi nanti.");
-        setLoading(false);
-        return;
-      }
+      const dlUrl = await fetchDownloadLink(spotifyUrl);
 
       setTrack({
         id: t.id || trackId,
@@ -70,11 +73,11 @@ function PlayerProvider({ children }) {
         artist: t.artists?.map((a) => a.name).join(", ") || "Tidak diketahui",
         cover: t.album?.images?.[0]?.url || t.cover || null,
         album: t.album?.name || t.album || null,
-        dl: dlJson.result.dl,
+        dl: dlUrl,
       });
     } catch (err) {
       console.error(err);
-      alert("Terjadi kesalahan saat memuat lagu.");
+      alert(`Gagal memuat lagu: ${err.message}`);
       setLoading(false);
     }
   }, []);
