@@ -21,11 +21,11 @@ function PlayerProvider({ children }) {
   const previewRetryRef = useRef(false);
 
   const loadTrack = useCallback(async (trackId, knownMeta = null, isRetry = false) => {
-  if (!isRetry) {
-    retryCountRef.current = 0;
-    previewRetryRef.current = false; // tambahkan ini
-  }
-  setLoading(true);
+    if (!isRetry) {
+      retryCountRef.current = 0;
+      previewRetryRef.current = false;
+    }
+    setLoading(true);
     try {
       // Kalau metadata belum diketahui, ambil DULU (sekuensial, aman dari tabrakan backend)
       let t = knownMeta;
@@ -39,12 +39,27 @@ function PlayerProvider({ children }) {
         t = metaJson.result;
       }
 
-      // Baru ambil link download SETELAH metadata selesai
+      // Baru ambil link download SETELAH metadata selesai — dengan retry otomatis
       const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
-      const dlJson = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
+      let dlJson = null;
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          dlJson = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
+          if (dlJson?.status && dlJson.result?.dl) break; // sukses, keluar loop
+        } catch (e) {
+          console.warn(`Percobaan ${attempts} gagal:`, e.message);
+        }
+        if (attempts < maxAttempts) {
+          await new Promise((res) => setTimeout(res, 800)); // jeda sebelum coba lagi
+        }
+      }
 
       if (!dlJson?.status || !dlJson.result?.dl) {
-        alert("Gagal mendapatkan link audio.");
+        alert("Gagal mendapatkan link audio setelah beberapa percobaan. Coba lagi nanti.");
         setLoading(false);
         return;
       }
@@ -128,7 +143,7 @@ function PlayerProvider({ children }) {
     setQueueIndex(-1);
   }, []);
 
-  // ====== Media Session API — TIDAK BERUBAH, tetap sama seperti kode asli kamu ======
+  // ====== Media Session API ======
   useEffect(() => {
     if (!track) return;
     if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
@@ -178,7 +193,7 @@ function PlayerProvider({ children }) {
     } catch (e) {}
   }, [currentTime, duration, ready]);
 
-  // ====== Pemasangan listener + retry & stall-timeout ======
+  // ====== Pemasangan listener + retry & stall-timeout + deteksi preview ======
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !track) return;
@@ -226,20 +241,20 @@ function PlayerProvider({ children }) {
     };
     const onTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
     const onLoadedMeta = () => {
-  const dur = audio.duration || 0;
-  setDuration(dur);
+      const dur = audio.duration || 0;
+      setDuration(dur);
 
-  // Deteksi kemungkinan preview URL (biasanya ~29-30 detik)
-  if (dur > 0 && dur < 35 && !previewRetryRef.current) {
-    previewRetryRef.current = true;
-    console.warn("Terdeteksi kemungkinan link preview (durasi pendek), mencoba ambil ulang link full...");
-    loadTrack(track.id, {
-      id: track.id, name: track.title,
-      artists: [{ name: track.artist }],
-      album: { name: track.album, images: track.cover ? [{ url: track.cover }] : [] }
-    }, true);
-  }
-};
+      // Deteksi kemungkinan preview URL (biasanya ~29-30 detik)
+      if (dur > 0 && dur < 35 && !previewRetryRef.current) {
+        previewRetryRef.current = true;
+        console.warn("Terdeteksi kemungkinan link preview (durasi pendek), mencoba ambil ulang link full...");
+        loadTrack(track.id, {
+          id: track.id, name: track.title,
+          artists: [{ name: track.artist }],
+          album: { name: track.album, images: track.cover ? [{ url: track.cover }] : [] }
+        }, true);
+      }
+    };
     const onError = () => {
       clearStallTimeout();
       handleFailure();
@@ -488,7 +503,6 @@ function AddToPlaylistModal({ track, onClose }) {
 }
 
 /* ====================== helpers ====================== */
-// ... (semua helper function tetap sama: fmtDuration, fmtNumber, pickImage, artistNames, apiGet, useApiFetch)
 function fmtDuration(ms) {
   if (!ms && ms !== 0) return "--:--";
   const s = Math.floor(ms / 1000);
@@ -523,7 +537,7 @@ async function apiGet(endpoint, q) {
   const res = await fetch(url);
   const json = await res.json();
   if (!json || !json.status || !json.result) {
-    throw new Error("Data tidak ditemukan di katalog.");
+    throw new Error(json?.error || "Data tidak ditemukan di katalog.");
   }
   return json.result;
 }
@@ -555,7 +569,6 @@ function useApiFetch(endpoint, query) {
 }
 
 /* ====================== Vinyl Disc & Atoms ====================== */
-// ... (VinylDisc, Chip, CatalogLabel, LoadingState, ErrorState, EmptyState tidak berubah)
 function VinylDisc({ size = 40, spinning = false, cover = null }) {
   return (
     <div className="disc" style={{ width: size, height: size, animationPlayState: spinning ? "running" : "paused" }}>
@@ -622,7 +635,6 @@ function EmptyState({ message }) {
 }
 
 /* ====================== Cards & Crate ====================== */
-// ... (EntityCard, CrateRow tetap sama)
 function EntityCard({ image, title, subtitle, meta, round, badge, onClick }) {
   return (
     <button className="e-card" onClick={onClick} disabled={!onClick}>
@@ -648,7 +660,6 @@ function CrateRow({ n, title, items, render }) {
 }
 
 /* ====================== Search ====================== */
-// ... (SearchBar tetap sama)
 function SearchBar({ value, onChange, onSubmit, autoFocus }) {
   return (
     <form className="search-bar" onSubmit={(e) => { e.preventDefault(); onSubmit(value.trim()); }}>
@@ -676,7 +687,6 @@ function FilterChips({ value, onChange, options }) {
 }
 
 /* ====================== Views ====================== */
-// ... (HomeView, ResultsCrates, TrackDetailView, AlbumDetailView, ArtistDetailView, PlaylistDetailView, CardMakerView tidak berubah, tapi pastikan di TrackDetailView tombol "Putar Lagu" memanggil play dari context)
 function HomeView({ nav }) {
   return (
     <div className="view">
@@ -787,37 +797,37 @@ function SearchView({ nav }) {
         <div className="result-list">
           {rows.map((r, i) => {
             if (r.kind === "track") {
-  const t = r.data;
-  return (
-    <ResultRow
-      key={t.uri || i}
-      image={pickImage(t.album?.images)}
-      title={t.name}
-      subtitle={artistNames(t.artists)}
-      meta={fmtDuration(t.duration_ms)}
-      badge={t.explicit ? "E" : null}
-      onClick={() => nav("track", t.id)}
-      trailing={
-        <div className="result-row-actions">
-          <button
-            className="result-row-play"
-            title="Putar"
-            onClick={(e) => { e.stopPropagation(); play(t.id, t); }}
-          >
-            <i className="fa-solid fa-play"></i>
-          </button>
-          <button
-            className="result-row-add"
-            title="Tambah ke playlist"
-            onClick={(e) => { e.stopPropagation(); setModalTrack(t); }}
-          >
-            +
-          </button>
-        </div>
-      }
-    />
-  );
-}
+              const t = r.data;
+              return (
+                <ResultRow
+                  key={t.uri || i}
+                  image={pickImage(t.album?.images)}
+                  title={t.name}
+                  subtitle={artistNames(t.artists)}
+                  meta={fmtDuration(t.duration_ms)}
+                  badge={t.explicit ? "E" : null}
+                  onClick={() => nav("track", t.id)}
+                  trailing={
+                    <div className="result-row-actions">
+                      <button
+                        className="result-row-play"
+                        title="Putar"
+                        onClick={(e) => { e.stopPropagation(); play(t.id, t); }}
+                      >
+                        <i className="fa-solid fa-play"></i>
+                      </button>
+                      <button
+                        className="result-row-add"
+                        title="Tambah ke playlist"
+                        onClick={(e) => { e.stopPropagation(); setModalTrack(t); }}
+                      >
+                        +
+                      </button>
+                    </div>
+                  }
+                />
+              );
+            }
             if (r.kind === "album") {
               const a = r.data;
               return (
@@ -1167,7 +1177,6 @@ function InfoView() {
 }
 
 /* ====================== Card Maker ====================== */
-// ... (CardMakerView tidak berubah, hanya di sini untuk kelengkapan)
 function CardMakerView({ presetId, nav }) {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState(null);
@@ -1440,7 +1449,6 @@ function BottomNav({ current, nav }) {
 }
 
 /* ====================== App Shell ====================== */
-// Tab-tab yang dianggap "root" untuk keperluan bottom nav (menentukan tab mana yang aktif)
 const TAB_OF = { home: "home", search: "search", card: "card", library: "library", info: "info", mylist: "library" };
 
 const TAB_NAMES = ["home", "search", "card", "library", "info"];
@@ -1780,12 +1788,12 @@ function Styles() {
 
       /* RESULT LIST (baris vertikal) */
       .result-row-actions { display: flex; gap: 8px; flex-shrink: 0; }
-.result-row-play {
-  width: 30px; height: 30px; border-radius: 50%; border: none;
-  background: var(--accent); color: #14110E; font-size: 13px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.result-row-play:hover { filter: brightness(1.08); }
+      .result-row-play {
+        width: 30px; height: 30px; border-radius: 50%; border: none;
+        background: var(--accent); color: #14110E; font-size: 13px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .result-row-play:hover { filter: brightness(1.08); }
 
       .result-list { display: flex; flex-direction: column; }
       .result-row {
