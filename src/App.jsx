@@ -3,35 +3,51 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 const API = "/api/spotify";
 
 // Ambil link download, dengan retry otomatis kalau backend belum siap / gagal.
-// Dipisah jadi fungsi sendiri (sama seperti pola di music.html) supaya loadTrack tetap ringkas.
-async function fetchDownloadLink(spotifyUrl) {
+// Catatan: respon API ini secara natural bisa 3-5 detik, jadi delay antar-retry dibuat
+// kecil saja (bukan tambahan besar) — waktu tunggu utama sudah datang dari request itu sendiri.
+// onAttempt(attempt, maxAttempts) dipanggil di awal tiap percobaan, dipakai untuk tampilkan progres ke UI.
+async function fetchDownloadLink(spotifyUrl, onAttempt = null) {
   const maxAttempts = 3;
+  const perAttemptTimeout = 8000; // batas waktu tiap percobaan, jaga-jaga kalau API hang total
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (onAttempt) onAttempt(attempt, maxAttempts);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), perAttemptTimeout);
+
     try {
-      const res = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`);
+      const res = await fetch(
+        `${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`,
+        { signal: controller.signal }
+      );
       const json = await res.json();
       if (json?.status && json.result?.dl) {
-        return json.result.dl;
+        return json.result.dl; // sukses
       }
       lastError = new Error("Link download tidak tersedia");
     } catch (e) {
-      lastError = e;
-      console.warn(`Percobaan ${attempt} gagal:`, e.message);
+      lastError = e.name === "AbortError" ? new Error("Server terlalu lama merespons") : e;
+      console.warn(`Percobaan ${attempt} gagal:`, lastError.message);
+    } finally {
+      clearTimeout(timeoutId);
     }
+
     if (attempt < maxAttempts) {
-      await new Promise((r) => setTimeout(r, attempt * 2500)); // 1s, lalu 2s
+      await new Promise((r) => setTimeout(r, 300)); // jeda kecil saja, bukan penundaan besar
     }
   }
   throw lastError || new Error("Gagal mendapatkan link download");
 }
+
 /* ====================== Player Context (diperbarui) ====================== */
 const PlayerContext = createContext(null);
 
 function PlayerProvider({ children }) {
   const [track, setTrack] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState("Memuat…");
   const [playing, setPlaying] = useState(false);
   const [ready, setReady] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -50,6 +66,7 @@ function PlayerProvider({ children }) {
       previewRetryRef.current = false;
     }
     setLoading(true);
+    setLoadingLabel("Memuat…");
     try {
       // Kalau metadata belum diketahui, ambil DULU (sekuensial, aman dari tabrakan backend)
       let t = knownMeta;
@@ -65,7 +82,9 @@ function PlayerProvider({ children }) {
 
       // Baru ambil link download SETELAH metadata selesai — download dulu, baru diputar
       const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
-      const dlUrl = await fetchDownloadLink(spotifyUrl);
+      const dlUrl = await fetchDownloadLink(spotifyUrl, (attempt, maxAttempts) => {
+        setLoadingLabel(attempt === 1 ? "Mengunduh audio…" : `Mencoba lagi (${attempt}/${maxAttempts})…`);
+      });
 
       setTrack({
         id: t.id || trackId,
@@ -238,7 +257,12 @@ function PlayerProvider({ children }) {
       if (nextIdx < queue.length) {
         setQueueIndex(nextIdx);
         loadTrack(queue[nextIdx].id, queue[nextIdx].meta);
+      } else if (queue.length > 1) {
+        // Playlist habis diputar, kembali ke lagu pertama (loop)
+        setQueueIndex(0);
+        loadTrack(queue[0].id, queue[0].meta);
       } else {
+        // Cuma satu lagu (bukan playlist), berhenti seperti biasa
         stop();
       }
     };
@@ -301,7 +325,7 @@ function PlayerProvider({ children }) {
   return (
     <PlayerContext.Provider
       value={{
-        track, loading, playing, ready, currentTime, duration, sheetOpen,
+        track, loading, loadingLabel, playing, ready, currentTime, duration, sheetOpen,
         play, playQueue, next, previous, hasNext, hasPrevious,
         togglePlay, stop, seek, setSheetOpen,
       }}
@@ -1335,7 +1359,7 @@ function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
 
 /* ====================== Mini Player (diperbarui) ====================== */
 function MiniPlayer() {
-  const { track, loading, playing, ready, togglePlay, stop, setSheetOpen } = usePlayer();
+  const { track, loading, loadingLabel, playing, ready, togglePlay, stop, setSheetOpen } = usePlayer();
 
   // Jika tidak ada track, tidak tampil
   if (!track) return null;
@@ -1351,7 +1375,7 @@ function MiniPlayer() {
       </button>
       <div className="mini-player-controls">
         {loading ? (
-          <span className="mini-player-loading">Memuat…</span>
+          <span className="mini-player-loading">{loadingLabel}</span>
         ) : (
           <>
             <button onClick={togglePlay} disabled={!ready}>
@@ -1367,7 +1391,7 @@ function MiniPlayer() {
 
 /* ====================== Now Playing (tampilan penuh) ====================== */
 function NowPlayingSheet() {
-  const { track, sheetOpen, setSheetOpen, playing, ready, loading, currentTime, duration, togglePlay, stop, seek, next, previous, hasNext, hasPrevious } = usePlayer();
+  const { track, sheetOpen, setSheetOpen, playing, ready, loading, loadingLabel, currentTime, duration, togglePlay, stop, seek, next, previous, hasNext, hasPrevious } = usePlayer();
   const [showAddModal, setShowAddModal] = useState(false);
 
   if (!sheetOpen || !track) return null;
@@ -1391,7 +1415,7 @@ function NowPlayingSheet() {
 
       <div className="now-playing-meta">
         <h2>{track.title}</h2>
-        <p>{track.artist}</p>
+        <p>{loading ? loadingLabel : track.artist}</p>
       </div>
 
       <div className="now-playing-progress">
