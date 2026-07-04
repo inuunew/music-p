@@ -13,7 +13,7 @@ async function fetchDownloadLink(spotifyUrl) {
       const res = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`);
       const json = await res.json();
       if (json?.status && json.result?.dl) {
-        return json.result.dl;
+        return json.result.dl; // sukses
       }
       lastError = new Error("Link download tidak tersedia");
     } catch (e) {
@@ -21,11 +21,12 @@ async function fetchDownloadLink(spotifyUrl) {
       console.warn(`Percobaan ${attempt} gagal:`, e.message);
     }
     if (attempt < maxAttempts) {
-      await new Promise((r) => setTimeout(r, attempt * 1000)); // 1s, lalu 2s
+      await new Promise((r) => setTimeout(r, 1000)); // jeda sebelum coba lagi
     }
   }
   throw lastError || new Error("Gagal mendapatkan link download");
 }
+
 /* ====================== Player Context (diperbarui) ====================== */
 const PlayerContext = createContext(null);
 
@@ -238,7 +239,12 @@ function PlayerProvider({ children }) {
       if (nextIdx < queue.length) {
         setQueueIndex(nextIdx);
         loadTrack(queue[nextIdx].id, queue[nextIdx].meta);
+      } else if (queue.length > 1) {
+        // Playlist habis diputar, kembali ke lagu pertama (loop)
+        setQueueIndex(0);
+        loadTrack(queue[0].id, queue[0].meta);
       } else {
+        // Cuma satu lagu (bukan playlist), berhenti seperti biasa
         stop();
       }
     };
