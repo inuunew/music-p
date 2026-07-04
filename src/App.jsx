@@ -43,23 +43,32 @@ function PlayerProvider({ children }) {
       const spotifyUrl = `https://open.spotify.com/track/${trackId}`;
       let dlJson = null;
       let attempts = 0;
-      const maxAttempts = 3;
+      const maxAttempts = 4;
 
       while (attempts < maxAttempts) {
         attempts++;
         try {
-          dlJson = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
-          if (dlJson?.status && dlJson.result?.dl) break; // sukses, keluar loop
+          const res = await fetch(`${API}?endpoint=spotify-download&q=${encodeURIComponent(spotifyUrl)}`).then((r) => r.json());
+          if (res?.status && res.result?.dl) {
+            const siap = await verifyDownloadReady(res.result.dl);
+            if (siap) {
+              dlJson = res;
+              break; // benar-benar siap, keluar loop
+            } else {
+              console.warn(`Percobaan ${attempts}: link dl belum siap, mencoba lagi...`);
+              dlJson = null;
+            }
+          }
         } catch (e) {
           console.warn(`Percobaan ${attempts} gagal:`, e.message);
         }
         if (attempts < maxAttempts) {
-          await new Promise((res) => setTimeout(res, 800)); // jeda sebelum coba lagi
+          await new Promise((res) => setTimeout(res, 1000 * attempts)); // backoff makin lama
         }
       }
 
       if (!dlJson?.status || !dlJson.result?.dl) {
-        alert("Gagal mendapatkan link audio setelah beberapa percobaan. Coba lagi nanti.");
+        alert("Gagal mendapatkan link audio yang siap diputar setelah beberapa percobaan. Coba lagi nanti.");
         setLoading(false);
         return;
       }
@@ -530,6 +539,23 @@ function pickImage(images, minWidth = 300) {
 function artistNames(artists) {
   if (!artists || !artists.length) return "Tidak diketahui";
   return artists.map((a) => a.name).filter(Boolean).join(", ");
+}
+
+async function verifyDownloadReady(url) {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Range: "bytes=0-2047" }, // cukup ambil sedikit byte, jangan full download
+    });
+    if (!(res.status === 200 || res.status === 206)) return false;
+    const buf = await res.arrayBuffer();
+    if (!buf || buf.byteLength < 512) return false; // terlalu kecil, kemungkinan placeholder/error
+    return true;
+  } catch (e) {
+    // Kalau gagal karena CORS/network, anggap tidak bisa dipastikan — biar audio tag yang tangani nanti
+    console.warn("Verifikasi link dl gagal (dilewati):", e.message);
+    return true;
+  }
 }
 
 async function apiGet(endpoint, q) {
